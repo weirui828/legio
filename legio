@@ -484,13 +484,17 @@ def cmd_run(projects, opts, args):
     if not args:
         die("usage: legio run <project>[:<job>] [--agent <host>] [--max-steps N] "
             "[--yolo] [--dry-run]")
-    host = opts["agent"] or DEFAULT_PROFILE
-    spec, prof = load_profile(host)
-    if prof.get("untested"):
-        print(c(f"warning: {host} is marked untested", YELLOW), file=sys.stderr)
     proj = project_of(projects, args[0].split(":", 1)[0])
     dispatch(proj)
-    cmd = [str(proj.bin("run")), "--host-spec", str(spec)]
+    cmd = [str(proj.bin("run"))]
+    # No --agent means: use whatever host this project already prefers.
+    # (Forcing a default here would silently override default_host_spec.)
+    if opts["agent"]:
+        spec, prof = load_profile(opts["agent"])
+        if prof.get("untested"):
+            print(c(f"warning: {opts['agent']} is marked untested", YELLOW),
+                  file=sys.stderr)
+        cmd += ["--host-spec", str(spec)]
     if opts["max_steps"] is not None:
         cmd += ["--max-steps", str(opts["max_steps"])]
     if opts["yolo"]:

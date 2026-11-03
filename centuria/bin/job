@@ -732,38 +732,36 @@ def task_for(job, role):
         return ("Read intake.md. Write spec.md in the job folder. "
                 "The scope intake accepted is binding.")
     if s == "build":
+        where = (f"Your working directory is {REPO}. Do the work in the worktree: "
+                 f"start every command with `cd {job['worktree']} && `. "
+                 f"Write build.md into {d}.")
         if n <= 1:
-            return (f"Round 1. Read spec.md, implement it in the worktree, make checks.sh pass, "
+            return (f"Round 1. {where} Read {d}/spec.md, implement it, make checks.sh pass, "
                     f"commit, push, and open a draft PR whose body says Closes #{job['issue']}.")
         prev = d / f"round-{n - 1}"
         fb = sorted(d.glob("feedback-*.md"))
         if fb:
-            return (f"Round {n}, after human feedback. Read {fb[-1]} and fix exactly what it says. "
-                    f"checks.sh must pass before you report READY.")
+            return (f"Round {n}, after human feedback. {where} Read {fb[-1]} and fix exactly what "
+                    f"it says. checks.sh must pass before you report READY.")
         if job.get("gate") == "FAIL":
-            return (f"Round {n}. The gate failed in round {n - 1}. Read {prev}/checks.md and fix "
-                    f"it. checks.sh must pass.")
-        return (f"Round {n}. Reviews asked for changes. Read {prev}/review-*.md and fix exactly "
-                f"those. checks.sh must pass.")
+            return (f"Round {n}. {where} The gate failed in round {n - 1}. Read {prev}/checks.md "
+                    f"and fix it. checks.sh must pass.")
+        return (f"Round {n}. {where} Reviews asked for changes. Read {prev}/review-*.md and fix "
+                f"exactly those. checks.sh must pass.")
     if s == "review":
         rd = d / f"round-{n}"
-        return (f"Round {n}. Read the diff in the worktree against origin/{BASE}, plus "
-                f"{rd}/checks.md and spec.md. Write {rd}/review-{role}.md - put it in that round "
-                f"folder, not the job folder. First line must be VERDICT: PASS or VERDICT: CHANGES.")
+        return (f"Round {n}. Your working directory is {REPO}. The diff to read is in the "
+                f"worktree: start commands with `cd {job['worktree']} && `. Read "
+                f"{rd}/checks.md and {d}/spec.md. Write {rd}/review-{role}.md. First line must be "
+                f"VERDICT: PASS or VERDICT: CHANGES.")
     if s == "approve":
         rd = d / f"round-{n}"
-        return (f"Round {n}. Read every file in the job folder, especially {rd}/checks.md and "
-                f"{rd}/review-*.md. Write decision.md. First line must be APPROVE or ESCALATE. "
-                f"Merge policy is {CONFIG.get('merge_policy', 'human')}: the human merges, you "
-                f"only judge.")
+        return (f"Round {n}. Your working directory is {REPO}. Read every file in {d}, especially "
+                f"{rd}/checks.md and {rd}/review-*.md, and check the diff with "
+                f"`cd {job['worktree']} && `. Write {d}/decision.md. First line must be APPROVE or "
+                f"ESCALATE. Merge policy is {CONFIG.get('merge_policy', 'human')}: the human "
+                f"merges, you only judge.")
     return ""
-
-
-def pending_reviewer(job):
-    for r, v in (job.get("reviews") or {}).items():
-        if v == "pending":
-            return r
-    return None
 
 
 def work_order(job):
@@ -780,15 +778,31 @@ def work_order(job):
     if s == "gate":
         return dict(out, kind="gate", bin=str(CENTURIA / "bin" / "gate"), argv=[job["id"]])
 
-    role = pending_reviewer(job) if s == "review" else STAGES.get(s)
-    if s == "review" and role is None:
-        return dict(out, kind="noop", why="reviews are in, waiting for centuria to settle them")
+    if s == "review":
+        pending = [r for r, v in (job.get("reviews") or {}).items() if v == "pending"]
+        if not pending:
+            return dict(out, kind="noop",
+                        why="reviews are in, waiting for centuria to settle them")
+        tiers = ((job.get("roster") or {}).get("reviewers") or {})
+        roles = [{"role": r,
+                  "tier": tiers.get(r) or (CONFIG.get("role_tiers") or {}).get(r) or "medium",
+                  "role_file": str(CENTURIA / "roles" / f"{r}.md"),
+                  "task": task_for(job, r)} for r in pending]
+        # Reviewers are independent: they read the same diff and each writes its own
+        # file. They belong in one work order so the runner can start them together.
+        return dict(out, kind="reviews", cwd=str(REPO), header=job_header(job), roles=roles)
+
+    role = STAGES.get(s)
     if not role:
         return dict(out, kind="unknown", why=f"config.json stages has no entry for {s!r}")
 
     tier = ((job.get("roster") or {}).get("reviewers") or {}).get(role) \
         or (CONFIG.get("role_tiers") or {}).get(role) or "medium"
-    cwd = job["worktree"] if s in {"build", "review", "approve"} else str(REPO)
+    # The agent's sandbox is its working directory. It has to reach three things:
+    # the worktree (to edit), the job folder (to write its artifact) and .git
+    # (to commit). Rooting it at the worktree makes the last two unreachable, so
+    # every stage runs from the repo root and the task text tells it to cd.
+    cwd = str(REPO)
     return dict(out, kind="agent", role=role, tier=tier, cwd=cwd,
                 role_file=str(CENTURIA / "roles" / f"{role}.md"),
                 header=job_header(job), task=task_for(job, role))

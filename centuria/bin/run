@@ -5,12 +5,16 @@ Usage:
   run [<job>] [--host-spec <path>] [--max-steps N] [--yolo] [--dry-run]
   run --all   [--host-spec <path>] [--max-steps N]
 
-<job> is a job id (001-add-subtract) or an issue number (12). Omitted: the one
-live job, if there is exactly one. --all runs up to config.json's `concurrency`
+<job> is a job id (001-add-subtract) or an issue number (12). Omitted: any new
+labelled issue is turned into a job first, then the one live job runs. --all runs up to config.json's `concurrency`
 jobs at once, each in its own process, and waits for them.
 
 --host-spec is optional: without it, .centuria/config.json's `default_host_spec`
 is used, so the daily command is just `centuria run`.
+
+A host spec may carry an `env` block: {"KEY": {"value": "..."}} or
+{"KEY": {"shell": "security find-generic-password ... -w"}}. The second form
+keeps a secret in the OS keychain and reads it only when an agent is spawned.
 
 The host spec is a JSON file that says how to invoke one agent CLI: the binary,
 its flags, how the prompt gets in, how the model is named. **centuria does not
@@ -27,6 +31,7 @@ It stops when the job needs a human, is finished, or the step budget runs out.
 """
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -60,6 +65,33 @@ def job_run(*args, capture=True):
 
 def job_json(*args):
     return json.loads(job_run(*args))
+
+
+def dispatch(dry):
+    """Turn new labelled issues into jobs.
+
+    legio does this across projects; when you drive one centuria directly it
+    has to do it for itself, or `run` sits there with nothing to do.
+    """
+    rows = job_json("queue", "--json")
+    started = []
+    for row in rows:
+        if row["kind"] != "new":
+            continue
+        if dry:
+            print(c(f"  would create a job for issue #{row['issue']}", DIM))
+            continue
+        res = subprocess.run([str(JOB), "create", str(row["issue"])],
+                             cwd=str(REPO), capture_output=True, text=True)
+        if res.returncode != 0:
+            tail = (res.stderr or res.stdout).strip().splitlines()
+            print(c(f"  issue #{row['issue']} not started - "
+                    f"{tail[-1] if tail else 'unknown'}", YELLOW))
+            continue
+        jid = res.stdout.strip()
+        started.append(jid)
+        print(c(f"  issue #{row['issue']} -> {jid}", DIM))
+    return started
 
 
 def pick(fixed):
@@ -125,21 +157,82 @@ def build(prof, order, yolo):
     if (prof.get("model") or {}).get("flag"):
         cmd += expand(prof["model"]["flag"], subs)
 
+    role_text = rf.read_text().rstrip()
     task = order["header"] + "\n\n" + order["task"]
     role_cfg = prof["role"]
     if role_cfg.get("mode") == "system":
         cmd += expand(role_cfg.get("flag") or [], subs)
         body = task
     else:
-        body = rf.read_text().rstrip() + "\n\n---\n\n" + task
+        # Start with the job header, never with the role file's `---`.
+        # A prompt passed as argv that begins with a dash is parsed as an
+        # option by most CLI argument parsers (dsh answered `unknown option`).
+        body = order["header"] + "\n\n" + role_text + "\n\n---\n\n" + order["task"]
     return cmd, body, cwd, model
+
+
+def build_env(prof):
+    """Resolve the host's `env` block into the child environment.
+
+    Each entry is either {"value": "..."} or {"shell": "..."}. The shell form
+    lets a secret live in the OS keychain and be read at spawn time, so it
+    never sits in a dotfile, an env export, or this repo's JSON.
+    """
+    env = os.environ.copy()
+    for key, spec in (prof.get("env") or {}).items():
+        if isinstance(spec, str):
+            value = spec
+        elif isinstance(spec, dict) and "value" in spec:
+            value = str(spec["value"])
+        elif isinstance(spec, dict) and "shell" in spec:
+            try:
+                res = subprocess.run(spec["shell"], shell=True, capture_output=True,
+                                     text=True, timeout=spec.get("timeout", 15))
+            except subprocess.TimeoutExpired:
+                die(f"env {key}: `{spec['shell']}` timed out "
+                    f"(is the keychain item there? it may be waiting for approval)")
+            if res.returncode != 0:
+                die(f"env {key}: `{spec['shell']}` failed: "
+                    f"{(res.stderr or res.stdout).strip()}")
+            value = res.stdout.strip()
+        else:
+            die(f"env {key}: needs 'value' or 'shell'")
+        if not value:
+            die(f"env {key}: resolved to an empty string")
+        env[key] = value
+    return env
+
+
+def spawn(prof, cmd, body, cwd):
+    """Start an agent without waiting; pair it with collect()."""
+    via = (prof.get("prompt") or {}).get("via", "stdin")
+    full = cmd + [body] if via == "arg" else cmd
+    kwargs = {"cwd": str(cwd), "env": build_env(prof), "text": True,
+              "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
+              "stdin": subprocess.PIPE if via != "arg" else subprocess.DEVNULL}
+    try:
+        proc = subprocess.Popen(full, **kwargs)
+    except FileNotFoundError:
+        die(f"{cmd[0]} not found on PATH")
+    return proc, (body if via != "arg" else None)
+
+
+def collect(proc, stdin_body, timeout):
+    try:
+        out, err = proc.communicate(stdin_body, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, err = proc.communicate()
+        return None, out or "", (err or "") + f"\n[timed out after {timeout}s]"
+    return proc.returncode, out or "", err or ""
 
 
 def invoke(prof, cmd, body, cwd):
     via = (prof.get("prompt") or {}).get("via", "stdin")
     timeout = prof.get("timeout_seconds", 3600)
     full = cmd + [body] if via == "arg" else cmd
-    kwargs = {"cwd": str(cwd), "capture_output": True, "text": True, "timeout": timeout}
+    kwargs = {"cwd": str(cwd), "capture_output": True, "text": True,
+              "timeout": timeout, "env": build_env(prof)}
     if via != "arg":
         kwargs["input"] = body
     try:
@@ -243,17 +336,23 @@ def main(argv):
     if prof.get("untested"):
         print(c(f"warning: {spec} is marked untested", YELLOW), file=sys.stderr)
 
-    if many:
-        if rest:
-            die("--all takes no job argument")
-        run_many(spec, budget, yolo, dry)
-        return
+    if many and rest:
+        die("--all takes no job argument")
 
     fixed = rest[0] if rest else None
+    if not fixed:
+        dispatch(dry)
+
+    if many:
+        run_many(spec, budget, yolo, dry)
+        return
     for n in range(budget):
         job = pick(fixed)
         if job is None:
-            print(c("nothing to do", GREEN))
+            if dry:
+                print(c("(no job yet - the dispatch above is what would happen first)", DIM))
+            else:
+                print(c("nothing to do", GREEN))
             return
         order = job_json("next", job["id"])
         kind = order["kind"]
@@ -280,6 +379,46 @@ def main(argv):
             job_run("done", order["id"])
             continue
 
+        if kind == "reviews":
+            running = []
+            for item in order["roles"]:
+                one = dict(order, role=item["role"], tier=item["tier"],
+                           role_file=item["role_file"], task=item["task"])
+                cmd, body, cwd, model = build(prof, one, yolo)
+                print(c(f"{tag}: {item['role']}", BOLD))
+                print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}", DIM))
+                if dry:
+                    print(c("  would run: " + " ".join(cmd), DIM))
+                    print()
+                    print(body)
+                    return
+                proc, stdin_body = spawn(prof, cmd, body, cwd)
+                log = (CENTURIA / "jobs" / order["id"]
+                       / f"agent-{order['round']}-{item['role']}.log")
+                running.append((item["role"], cmd, proc, stdin_body, log))
+            failed = []
+            for role, cmd, proc, stdin_body, log in running:
+                code, out, err = collect(proc, stdin_body, prof.get("timeout_seconds", 3600))
+                try:
+                    log.write_text(f"$ {' '.join(cmd)}\n\n--- stdout ---\n{out}\n\n"
+                                   f"--- stderr ---\n{err}\n")
+                except OSError:
+                    log = None
+                if code != 0:
+                    failed.append((role, code, err or out, log))
+            if failed:
+                role, code, text, log = failed[0]
+                print(c(f"  {role} failed (exit {code})", RED))
+                for line in text.strip().splitlines()[-12:]:
+                    print(c("  " + line, DIM))
+                if log:
+                    print(c(f"  full output: {log}", DIM))
+                print(c("  the job was not settled; fix it and run again", YELLOW))
+                return
+            print(c(f"  {len(running)} review(s) finished", DIM))
+            job_run("done", order["id"])
+            continue
+
         cmd, body, cwd, model = build(prof, order, yolo)
         print(c(f"{tag}: {order['role']}", BOLD))
         print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}", DIM))
@@ -289,10 +428,20 @@ def main(argv):
             print(body)
             return
         res = invoke(prof, cmd, body, cwd)
+        log = (CENTURIA / "jobs" / order["id"]
+               / f"agent-{order['round']}-{order['role']}.log")
+        try:
+            log.write_text(f"$ {' '.join(cmd)}\n\n"
+                           f"--- stdout ---\n{res.stdout}\n\n"
+                           f"--- stderr ---\n{res.stderr}\n")
+        except OSError:
+            log = None
         if res.returncode != 0:
             print(c(f"  agent failed (exit {res.returncode})", RED))
-            for line in (res.stderr or res.stdout or "").strip().splitlines()[-20:]:
+            for line in (res.stderr or res.stdout or "").strip().splitlines()[-12:]:
                 print(c("  " + line, DIM))
+            if log:
+                print(c(f"  full output: {log}", DIM))
             print(c("  the job was not settled; fix it and run again", YELLOW))
             return
         job_run("done", order["id"])
