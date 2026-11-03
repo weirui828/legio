@@ -128,14 +128,22 @@ def repo_lock():
         f.close()
 
 
-def load(job_id):
-    """Read a job, holding its lock until this process exits."""
+def load(job_id, readonly=False):
+    """Read a job, holding its lock until this process exits.
+
+    readonly skips the lock: `save` replaces job.json atomically, so a reader can
+    never see a half-written file. Read-only commands use it so that inspecting a
+    job needs no write permission on the job folder.
+    """
     path = job_dir(job_id) / "job.json"
     if not path.exists():
         die(f"no job {job_id}")
-    if job_id not in _locks:
-        _locks[job_id] = open(job_dir(job_id) / ".lock", "w")
-        fcntl.flock(_locks[job_id], fcntl.LOCK_EX)
+    if not readonly and job_id not in _locks:
+        try:
+            _locks[job_id] = open(job_dir(job_id) / ".lock", "w")
+            fcntl.flock(_locks[job_id], fcntl.LOCK_EX)
+        except OSError:
+            pass  # cannot lock here; reads are still safe, writes will fail loudly
     return json.loads(path.read_text())
 
 
@@ -146,10 +154,11 @@ def save(job):
     tmp.replace(path)
 
 
-def all_jobs():
+def all_jobs(readonly=False):
     if not JOBS.exists():
         return []
-    return [load(p.name) for p in sorted(JOBS.iterdir()) if (p / "job.json").exists()]
+    return [load(p.name, readonly) for p in sorted(JOBS.iterdir())
+            if (p / "job.json").exists()]
 
 
 def running(jobs):
@@ -162,13 +171,13 @@ def require_slot(job_id):
             f"concurrency {CONCURRENCY} reached; running: {', '.join(busy)}")
 
 
-def resolve(arg):
+def resolve(arg, readonly=False):
     if arg.isdigit():
-        matches = [j for j in all_jobs() if j["issue"] == int(arg)]
+        matches = [j for j in all_jobs(readonly) if j["issue"] == int(arg)]
         if not matches:
             die(f"no job for issue #{arg}")
         return matches[0]
-    return load(arg)
+    return load(arg, readonly)
 
 
 def first_line(path):
@@ -675,7 +684,8 @@ def summary_rows(jobs):
 
 
 def cmd_summary(args):
-    jobs = [resolve(a) for a in args] if args else all_jobs()
+    jobs = ([resolve(a, readonly=True) for a in args] if args
+            else all_jobs(readonly=True))
     if not jobs:
         print("no jobs")
         return
@@ -686,7 +696,8 @@ def cmd_summary(args):
 
 
 def cmd_view(args):
-    jobs = [sync(resolve(a)) for a in args] if args else [sync(j) for j in all_jobs()]
+    jobs = ([sync(resolve(a, readonly=True)) for a in args] if args
+            else [sync(j) for j in all_jobs(readonly=True)])
     out = [{"id": j["id"], "issue": j["issue"], "title": j["title"], "stage": j["stage"],
             "round": j["round"], "round_limit": j["round_limit"], "pr": j["pr"],
             "branch": j["branch"], "worktree": j.get("worktree"),
@@ -843,7 +854,7 @@ def cmd_route(job_id):
 
 
 def cmd_next(job_id):
-    print(json.dumps(work_order(load(resolve(job_id)["id"])), ensure_ascii=False))
+    print(json.dumps(work_order(resolve(job_id, readonly=True)), ensure_ascii=False))
 
 
 def settle(job):
