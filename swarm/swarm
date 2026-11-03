@@ -1,0 +1,255 @@
+#!/usr/bin/env python3
+"""swarm — run a fixed cast of reviewers over one diff.
+
+  swarm run [<reviewer> ...] [on] <repo>     review a repo's diff
+  swarm reviewers                            the cast and their tiers
+  swarm hosts                                host adapters swarm can see
+  swarm version
+
+One run is: diff in, one review file per reviewer, one verdict out. There is no
+job, no round and no state to resume — swarm only does the review part.
+
+Defaults: every registered reviewer, `claude-code` as the host, and the diff of
+<repo> against origin/main (or origin/HEAD, main, master, HEAD~1 — the first
+base that exists). Each run is written to <repo>/.swarm/<run-id>/ and recorded
+in .git/info/exclude, so `git status` in that repo stays clean.
+
+Exit codes: 0 all PASS · 1 any CHANGES · 2 operational error · 3 empty diff.
+"""
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import api  # noqa: E402
+import hostkit  # noqa: E402
+
+VERSION = "0.1.0"
+TTY = sys.stdout.isatty()
+BOLD, DIM, RED, GREEN, YELLOW, BLUE, CYAN = "1", "2", "31", "32", "33", "34", "36"
+
+TIERS = ("light", "medium", "strong")
+VERDICT_COLOR = {"PASS": GREEN, "CHANGES": RED, "ERROR": RED, "DRY": YELLOW}
+
+
+def c(text, code):
+    return f"\033[{code}m{text}\033[0m" if TTY else str(text)
+
+
+# ---- commands --------------------------------------------------------------
+
+
+def cmd_run(args):
+    words = [w for w in args.words if w != "on"]
+    if not words:
+        raise api.SwarmError("name a repo: swarm run [reviewer ...] [on] <repo>")
+    repo, names = words[-1], words[:-1]
+
+    tiers = {}
+    for pair in args.tier or []:
+        if "=" not in pair:
+            raise api.SwarmError(f"--tier wants role=tier, got {pair!r}")
+        role, tier = (s.strip() for s in pair.split("=", 1))
+        if tier not in TIERS:
+            raise api.SwarmError(f"--tier {role}: {tier!r} is not one of {', '.join(TIERS)}")
+        tiers[role] = tier
+
+    report = api.review(
+        repo, reviewers=names, base=args.base, head=args.head, diff=args.diff,
+        pr=args.pr, spec=args.spec, host=args.host, hosts_dir=args.hosts_dir,
+        risk=args.risk, tiers=tiers, jobs=args.jobs, timeout=args.timeout,
+        yolo=args.yolo, dry_run=args.dry_run, out=args.out)
+
+    if report.dry:
+        if args.json:
+            print(json.dumps({"dry_run": True, "plan": [{
+                "reviewer": item["name"], "tier": item["tier"],
+                "model": item["model"], "command": item["cmd"]} for item in report.plan]},
+                indent=2))
+            return 0
+        for item in report.plan:
+            model = item["model"] or "-"
+            print(c(f"{item['name']}  tier={item['tier']}  model={model}", BOLD))
+            print(c("  would run: " + " ".join(item["cmd"]), DIM))
+            print()
+            print(item["body"])
+            print()
+        return 0
+
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2))
+        return report.exit_code
+
+    print_header(report)
+    print_table(report)
+    return report.exit_code
+
+
+def print_header(report):
+    t = report.target
+    print()
+    print(c(f"swarm {report.run_id}", BOLD) + c(f"  host={report.host}", DIM))
+    print(c(f"repo  {t['root']}", DIM))
+    print(c(f"diff  {t['source']} — {t['files']} file(s), +{t['added']} -{t['removed']}", DIM))
+    print(c(f"out   {report.out_dir}", DIM))
+    print()
+
+
+def print_table(report):
+    rows = [("reviewer", "tier", "model", "verdict")]
+    for name, tier, model, verdict, error in report.rows():
+        rows.append((name, tier, model or "-",
+                     verdict + ("  ⚠" if error and verdict != "ERROR" else "")))
+    widths = [max(len(str(r[i])) for r in rows) for i in range(4)]
+    print("  ".join(str(rows[0][i]).ljust(widths[i]) for i in range(4)))
+    print("  ".join("─" * widths[i] for i in range(4)))
+    for row in rows[1:]:
+        cells = [str(row[0]).ljust(widths[0]), str(row[1]).ljust(widths[1]),
+                 str(row[2]).ljust(widths[2])]
+        cells.append(c(str(row[3]).ljust(widths[3]), VERDICT_COLOR.get(row[3].split()[0], BOLD)))
+        print("  ".join(cells))
+    print()
+
+    blockers = report.must_fix()
+    if blockers:
+        print(c("must fix", BOLD))
+        for who, item in blockers:
+            print(f"  {c(who, RED)} — {item}")
+        print()
+
+    notes = [(r["reviewer"], r["error"]) for r in report.results if r["error"]]
+    if notes:
+        print(c("notes", BOLD))
+        for who, err in notes:
+            print(f"  {who}: {err}")
+        print()
+
+    for w in report.warnings:
+        print(c(f"warning: {w}", YELLOW))
+
+    color = VERDICT_COLOR.get(report.overall, BOLD)
+    print(c(f"overall: {report.overall}", color)
+          + c(f"  (exit {report.exit_code})", DIM)
+          + c(f"  report: {report.out_dir / 'report.md'}", DIM))
+
+
+def cmd_reviewers(args):
+    cfg = api.load_config()
+    registry = api.list_reviewers(cfg)
+    rows = [("reviewer", "tier", "role file", "what it judges")]
+    for name, info in registry.items():
+        rows.append((name, info.get("tier") or "medium",
+                     f"roles/{name}.md", info.get("about") or ""))
+    widths = [max(len(str(r[i])) for r in rows) for i in range(4)]
+    print("  ".join(str(rows[0][i]).ljust(widths[i]) for i in range(4)))
+    print("  ".join("─" * widths[i] for i in range(4)))
+    for row in rows[1:]:
+        print("  ".join(str(row[i]).ljust(widths[i]) for i in range(4)))
+    return 0
+
+
+def cmd_hosts(args):
+    hosts = api.list_hosts(args.hosts_dir)
+    if not hosts:
+        print(c("no host specs found", YELLOW))
+        return 1
+    rows = [("host", "model tiers", "untested", "about")]
+    for name, prof in hosts.items():
+        tiers = ", ".join(f"{k}={v}" for k, v in (prof.get("model_tiers") or {}).items())
+        rows.append((name, tiers or "-",
+                     "yes" if prof.get("untested") else "",
+                     prof.get("about") or ""))
+    widths = [max(len(str(r[i])) for r in rows) for i in range(4)]
+    print("  ".join(str(rows[0][i]).ljust(widths[i]) for i in range(4)))
+    print("  ".join("─" * widths[i] for i in range(4)))
+    for row in rows[1:]:
+        print("  ".join(str(row[i]).ljust(widths[i]) for i in range(4)))
+    print()
+    print(c("swarm/hosts wins over ../hosts for the same name; real hosts are borrowed "
+            "from legio's registry.", DIM))
+    return 0
+
+
+# ---- argument parsing ------------------------------------------------------
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog="swarm",
+        description="Run a fixed cast of reviewers over one diff. Review only: "
+                    "no build, no merge, no job state.")
+    p.add_argument("--version", action="version", version=f"swarm {VERSION}")
+    sub = p.add_subparsers(dest="cmd")
+
+    run = sub.add_parser("run", help="review a repo's diff")
+    run.add_argument("words", nargs="*", metavar="[reviewer ...] [on] <repo>",
+                     help="reviewer names (default: all), then the repo")
+    run.add_argument("--base", help="diff base ref (default: origin/main, "
+                                    "origin/HEAD, main, master, HEAD~1 — first that exists)")
+    run.add_argument("--head", default=None, help="diff head ref (default HEAD)")
+    run.add_argument("--diff", help="use this patch instead of computing one ('-' = stdin)")
+    run.add_argument("--pr", type=int, help="review that PR's diff (needs `gh`)")
+    run.add_argument("--spec", help="issue/spec text to give the reviewers as context")
+    run.add_argument("--host", help="host adapter name (default: config.json default_host)")
+    run.add_argument("--hosts-dir", help="extra directory to search for host specs")
+    run.add_argument("--risk", choices=("low", "medium", "high"),
+                     help="bump code-reviewer's tier the way centuria's route does")
+    run.add_argument("--tier", action="append", metavar="ROLE=TIER",
+                     help="override one reviewer's tier (repeatable)")
+    run.add_argument("--jobs", type=int, help="how many agents at once (default: all)")
+    run.add_argument("--timeout", type=int, help="seconds per agent")
+    run.add_argument("--out", help="output directory (default <repo>/.swarm/<run-id>/)")
+    run.add_argument("--yolo", action="store_true",
+                     help="add the host's approval-skipping flags (off by default)")
+    run.add_argument("--dry-run", action="store_true",
+                     help="print the commands and prompts, spawn nothing")
+    run.add_argument("--json", action="store_true", help="print the report as JSON")
+
+    rev = sub.add_parser("reviewers", help="the cast and their tiers")
+    rev.add_argument("--json", action="store_true")
+
+    hosts = sub.add_parser("hosts", help="host adapters swarm can see")
+    hosts.add_argument("--hosts-dir")
+    hosts.add_argument("--json", action="store_true")
+
+    sub.add_parser("version", help="print the version")
+    return p
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.cmd == "run":
+            return cmd_run(args)
+        if args.cmd == "reviewers":
+            if args.json:
+                print(json.dumps(api.list_reviewers(), indent=2))
+                return 0
+            return cmd_reviewers(args)
+        if args.cmd == "hosts":
+            if args.json:
+                print(json.dumps(api.list_hosts(args.hosts_dir), indent=2))
+                return 0
+            return cmd_hosts(args)
+        if args.cmd == "version":
+            print(f"swarm {VERSION}")
+            return 0
+        parser.print_help()
+        return 2
+    except api.NothingToReview as e:
+        print(c(f"swarm: {e}", YELLOW), file=sys.stderr)
+        return 3
+    except (api.SwarmError, hostkit.HostError) as e:
+        print(c(f"swarm: {e}", RED), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print(c("\nswarm: interrupted", YELLOW), file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

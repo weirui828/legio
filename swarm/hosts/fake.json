@@ -1,0 +1,28 @@
+{
+  "host": "fake",
+  "about": "Test harness only: writes the review file an agent would write. No model, no network. Never point it at a real repo.",
+  "command": [
+    "python3",
+    "{host_dir}/../tests/fake-reviewer.py"
+  ],
+  "yolo": [],
+  "role": {
+    "mode": "concat"
+  },
+  "prompt": {
+    "via": "stdin"
+  },
+  "cwd": {
+    "mode": "process"
+  },
+  "model": {
+    "flag": []
+  },
+  "model_tiers": {
+    "light": "none",
+    "medium": "none",
+    "strong": "none"
+  },
+  "host_paths": [],
+  "timeout_seconds": 120
+}

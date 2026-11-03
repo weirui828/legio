@@ -1,0 +1,34 @@
+{
+  "default_host": "claude-code",
+  "out_dir": ".swarm",
+  "timeout_seconds": 3600,
+  "max_diff_lines": 3000,
+  "reviewers": {
+    "code-reviewer": {
+      "tier": "medium",
+      "about": "correct, in scope, actually tested"
+    },
+    "security-reviewer": {
+      "tier": "strong",
+      "about": "injection, privilege, leaks, dependencies"
+    },
+    "ux-reviewer": {
+      "tier": "medium",
+      "about": "can an ordinary user get through it"
+    },
+    "ui-reviewer": {
+      "tier": "light",
+      "about": "alignment, spacing, hierarchy, theme"
+    },
+    "ios-reviewer": {
+      "tier": "medium",
+      "about": "Apple HIG conformance and App Store review risk"
+    }
+  },
+  "risk_reviewer": "code-reviewer",
+  "risk_tiers": {
+    "low": "light",
+    "medium": "medium",
+    "high": "strong"
+  }
+}

@@ -9,6 +9,10 @@ way: doorkeeper → spec → build → gate → review → arbiter → you merge
 
 One centuria per project. Many projects under one legio.
 
+This repo carries a second tool: **swarm**, the review-only set — the same reviewer
+cast with the whole pipeline removed (diff in, review files out, nothing else).
+See the swarm section below and `swarm/README.md`.
+
 ---
 
 ## The split: legio does not know what the pipeline looks like
@@ -204,14 +208,21 @@ legio/                          the system
 ├── legio                       the command
 ├── config.json                 projects_root, stale threshold
 ├── hosts/                      one JSON per agent CLI
-└── centuria/                   the template copied into a project
-    ├── bin/centuria            single entry point, forwards to the three below
-    ├── bin/job                 the state machine; the only writer of job.json
-    ├── bin/run                 the loop and the host adapter; starts agents
-    ├── bin/gate                runs checks.sh in a worktree
-    ├── roles/*.md              the eight roles
-    ├── config.json             routing, protected paths, merge policy
-    └── checks.sh               this project's checks (you fill this in)
+├── centuria/                   the template copied into a project
+│   ├── bin/centuria            single entry point, forwards to the three below
+│   ├── bin/job                 the state machine; the only writer of job.json
+│   ├── bin/run                 the loop and the host adapter; starts agents
+│   ├── bin/gate                runs checks.sh in a worktree
+│   ├── roles/*.md              the eight roles
+│   ├── config.json             routing, protected paths, merge policy
+│   └── checks.sh               this project's checks (you fill this in)
+└── swarm/                      review-only: a diff in, review files out
+    ├── swarm                   the command (reviewers and the repo, nothing else)
+    ├── api.py                  the library seam: review(...) -> Report
+    ├── hostkit.py              host adapter: build/spawn/collect
+    ├── roles/*.md              the five reviewers
+    ├── hosts/fake.json         test harness; real hosts come from ../hosts
+    └── config.json             reviewer tiers, default host
 ```
 
 Stationed, a project looks like:
@@ -271,6 +282,35 @@ it.
 
 Adding a **stage** is the expensive change: `TRANSITIONS` at the top of `bin/job` and the
 branches inside `advance()`.
+
+## swarm — the review half
+
+`swarm/` is the second tool in this repo, and it is deliberately small: **review only**.
+No issue, no intake, no spec, no build, no rounds, no merge — you hand it a diff and it
+hands back reviewers' verdicts.
+
+```bash
+./swarm/swarm run code-reviewer on ~/dev/webapp    # one reviewer
+./swarm/swarm run all on ~/dev/webapp              # all five, at the same time
+```
+
+| name | tier | judges | centuria role |
+|---|---|---|---|
+| `code-reviewer` | medium | correct, in scope, actually tested | Probator |
+| `security-reviewer` | strong | injection, privilege, leaks, dependencies | Medicus |
+| `ux-reviewer` | medium | can an ordinary user get through it | Mensor |
+| `ui-reviewer` | light | alignment, spacing, hierarchy, theme | Librator |
+| `ios-reviewer` | medium | Apple HIG conformance and App Store review risk | — (new) |
+
+It keeps the two things that matter from the pipeline above — the role prompts and the
+verdict contract (`VERDICT: PASS` / `VERDICT: CHANGES` as the first line of
+`review-<name>.md`) — and it borrows `hosts/` rather than copying it, so one host fix
+reaches both tools. A run lands in `<repo>/.swarm/<run-id>/` and that path goes into the
+project's `.git/info/exclude`, so the reviewed project's `git status` stays clean.
+
+Exit codes: `0` all PASS · `1` any CHANGES · `2` operational error · `3` empty diff. It
+never merges, comments or labels, and it keeps no state between runs. Full reference:
+`swarm/README.md`.
 
 ## Two hard rules
 
@@ -394,6 +434,16 @@ legio run <project> --agent fake --max-steps 20
 
 Every agent invocation is written next to the job as `agent-<round>-<role>.log`, holding
 the command, stdout and stderr, so any failure can be read back later.
+
+swarm uses the same trick through `swarm/tests/fake-reviewer.py` plus
+`swarm/hosts/fake.json`:
+
+```bash
+python3 -m unittest discover -s swarm/tests -v
+```
+
+No model and no network there either; it covers the reviewer fan-out, all exit codes,
+the `--diff`/`--spec` paths, a crashed reviewer, and the clean-`git status` guarantee.
 
 ## What a job cost
 
