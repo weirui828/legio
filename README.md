@@ -214,7 +214,7 @@ legio advance <project>:<job> <阶段>  推进状态机(非法迁移会被拒)
 legio say <project>:<job> <文字>      反馈,打回给 Fabri 再来一轮
 legio reject <project>:<job> <理由>   打回并关闭
 legio run <project>[:<job>] [--agent <host>]   派活,再让 centuria 自己跑
-legio hosts                           列出可用的宿主 adapter
+legio hosts [--json]                  列出可用的宿主 adapter(--json 输出 JSON)
 legio labels <project>                创建三个 GitHub 标签
 legio sync [<project>]               派活:把新 issue 变成 job,再看队列
 legio doctor [<project>]             体检
