@@ -1,0 +1,14 @@
+{
+  "host": "gemini",
+  "about": "Gemini CLI, non-interactive (-p). NOT tested: gemini is not installed on this machine.",
+  "command": ["gemini", "-p"],
+  "yolo": ["--yolo"],
+  "role": {"mode": "concat"},
+  "prompt": {"via": "stdin"},
+  "cwd": {"mode": "process"},
+  "model": {"flag": ["-m", "{model}"]},
+  "model_tiers": {"light": "gemini-2.5-flash", "medium": "gemini-2.5-pro", "strong": "gemini-2.5-pro"},
+  "host_paths": [],
+  "timeout_seconds": 3600,
+  "untested": true
+}

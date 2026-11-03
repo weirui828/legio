@@ -1,0 +1,13 @@
+{
+  "host": "echo",
+  "about": "Dry run: prints the prompt instead of running an agent. Use it to see what legio would do, and to test the pipeline.",
+  "command": ["python3", "-c", "import sys; sys.stdout.write('[echo] would hand this to an agent:\\n\\n' + sys.stdin.read())"],
+  "yolo": [],
+  "role": {"mode": "concat"},
+  "prompt": {"via": "stdin"},
+  "cwd": {"mode": "process"},
+  "model": {"flag": []},
+  "model_tiers": {"light": "none", "medium": "none", "strong": "none"},
+  "host_paths": [],
+  "timeout_seconds": 60
+}

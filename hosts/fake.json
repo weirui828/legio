@@ -1,0 +1,28 @@
+{
+  "host": "fake",
+  "about": "Test harness only: a script that writes the artifacts an agent would write. Never point it at a real project.",
+  "command": [
+    "python3",
+    "{host_dir}/../tests/fake-agent.py"
+  ],
+  "yolo": [],
+  "role": {
+    "mode": "concat"
+  },
+  "prompt": {
+    "via": "stdin"
+  },
+  "cwd": {
+    "mode": "process"
+  },
+  "model": {
+    "flag": []
+  },
+  "model_tiers": {
+    "light": "none",
+    "medium": "none",
+    "strong": "none"
+  },
+  "host_paths": [],
+  "timeout_seconds": 120
+}

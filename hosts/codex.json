@@ -1,0 +1,14 @@
+{
+  "host": "codex",
+  "about": "Codex CLI, non-interactive (codex exec). No separate system-prompt flag, so the role file is concatenated into the prompt.",
+  "command": ["codex", "exec", "--skip-git-repo-check"],
+  "yolo": ["-s", "workspace-write"],
+  "role": {"mode": "concat"},
+  "prompt": {"via": "stdin"},
+  "cwd": {"mode": "flag", "flag": ["-C", "{cwd}"]},
+  "model": {"flag": ["-m", "{model}"]},
+  "model_tiers": {"light": "gpt-5-mini", "medium": "gpt-5", "strong": "gpt-5-codex"},
+  "host_paths": [],
+  "timeout_seconds": 3600,
+  "_note": "Model ids drift. Check what your Codex accepts before trusting the tier map."
+}

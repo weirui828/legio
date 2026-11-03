@@ -1,0 +1,764 @@
+#!/usr/bin/env python3
+"""legio — the command that runs one or more centuriae.
+
+  legio add <path>            station a centuria in a project (copies .centuria/)
+  legio remove <path>         take it out again (--force to skip the prompt)
+  legio ls                    centuriae and their overall state
+  legio status [--all]        jobs: active only, or every job
+  legio inbox                 what is waiting on you, worst first
+  legio next <project> [job]  the next step, with the prompt to hand to an agent
+  legio route <project>[:job] risk + surfaces -> reviewer set
+  legio gate <project>:<job>  run the checks in that job's worktree
+  legio advance <project>[:job] <stage>
+  legio say <project>:<job> <text>     feedback -> the job goes back to build
+  legio reject <project>:<job> <text>  reject a job that waits on you
+  legio sync [<project>]      turn new labelled issues into jobs, then show the queue
+  legio doctor [<project>]    is this centuria still healthy
+  legio version
+
+Options: --root DIR, --offline, --all, --dry-run, --force
+
+Discovery: every <projects_root>/*/.centuria/config.json is a centuria.
+Nothing legio writes into a project ever enters git: the files are hidden and
+recorded in .git/info/exclude, which is local to the machine.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+VERSION = "0.1.0"
+HERE = Path(__file__).resolve().parent
+TEMPLATE = HERE / "centuria"
+CONFIG_PATH = HERE / "config.json"
+HOSTS_DIR = HERE / "hosts"
+
+
+
+TTY = sys.stdout.isatty()
+
+
+def c(text, code):
+    return f"\033[{code}m{text}\033[0m" if TTY else str(text)
+
+
+BOLD, DIM, RED, GREEN, YELLOW, BLUE, CYAN = "1", "2", "31", "32", "33", "34", "36"
+
+
+def die(msg):
+    print(f"legio: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def strip_ansi(s):
+    out, i = [], 0
+    while i < len(s):
+        if s.startswith("\033[", i):
+            i = s.find("m", i)
+            if i < 0:
+                break
+            i += 1
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
+def table(headers, rows):
+    widths = [len(h) for h in headers]
+    for r in rows:
+        for i, cell in enumerate(r):
+            widths[i] = max(widths[i], len(strip_ansi(str(cell))))
+    out = ["  ".join(c(h.ljust(widths[i]), BOLD) for i, h in enumerate(headers)),
+           "  ".join("─" * w for w in widths)]
+    for r in rows:
+        out.append("  ".join(str(cell) + " " * (widths[i] - len(strip_ansi(str(cell))))
+                             for i, cell in enumerate(r)))
+    return "\n".join(out)
+
+
+def human(seconds):
+    if seconds < 60:
+        return f"{int(seconds)}s"
+    if seconds < 3600:
+        return f"{int(seconds // 60)}m"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)}h{int(seconds % 3600 // 60):02d}m"
+    return f"{int(seconds // 86400)}d"
+
+
+# ---- config / discovery ----------------------------------------------------
+
+
+def load_config():
+    cfg = {"projects_root": "~/dev", "stale_minutes": 240}
+    if CONFIG_PATH.exists():
+        try:
+            cfg.update(json.loads(CONFIG_PATH.read_text()))
+        except json.JSONDecodeError as e:
+            die(f"{CONFIG_PATH} is not valid JSON: {e}")
+    if os.environ.get("LEGIO_ROOT"):
+        cfg["projects_root"] = os.environ["LEGIO_ROOT"]
+    return cfg
+
+
+class Project:
+    """One centuria: a project with .centuria/ stationed in it."""
+
+    def __init__(self, path):
+        self.path = path
+        self.name = path.name
+        self.centuria = path / ".centuria"
+        self.config = self._read("config.json", {})
+        self.manifest = self._read("version.json", {})
+
+    def _read(self, rel, default):
+        p = self.centuria / rel
+        if not p.exists():
+            return default
+        try:
+            return json.loads(p.read_text())
+        except json.JSONDecodeError:
+            return default
+
+    @property
+    def version(self):
+        return self.manifest.get("legio") or "—"
+
+    @property
+    def concurrency(self):
+        return self.config.get("concurrency", 1)
+
+    def bin(self, name):
+        return self.centuria / "bin" / name
+
+
+def discover(root):
+    root = Path(root).expanduser().resolve()
+    if not root.is_dir():
+        die(f"projects root {root} does not exist "
+            f"(set projects_root in {CONFIG_PATH} or export LEGIO_ROOT)")
+    found = [Project(p) for p in sorted(root.iterdir())
+             if p.is_dir() and (p / ".centuria" / "config.json").exists()]
+    return found
+
+
+def resolve(projects, sel):
+    """<project>:<job> -> (project, job id), asking the centuria what it has."""
+    if ":" not in sel:
+        die("use <project>:<job>, e.g. webapp:001-dark-mode or webapp:#3")
+    pname, ref = sel.split(":", 1)
+    proj = project_of(projects, pname)
+    ref = ref.lstrip("#")
+    for j in view(proj):
+        if j["id"] == ref or str(j["issue"]) == ref:
+            return proj, j["id"]
+    die(f"no job {ref!r} in {pname}")
+
+
+def project_of(projects, name):
+    p = next((p for p in projects if p.name == name), None)
+    if p is None:
+        die(f"no centuria named {name!r} "
+            f"(have: {', '.join(p.name for p in projects) or 'none'})")
+    return p
+
+
+def job_cli(job, command, stdin_text=None):
+    cli = job.project.bin("job")
+    if not cli.exists():
+        die(f"{cli} is missing — is {job.project.name} really a centuria?")
+    try:
+        res = subprocess.run([str(cli), command, job.id], cwd=job.project.path,
+                             input=stdin_text or "", capture_output=True, text=True)
+    except OSError as e:
+        die(f"could not run {cli}: {e}")
+    if res.returncode != 0:
+        die((res.stderr or res.stdout).strip())
+    return (res.stdout or "").strip()
+
+
+# ---- github (read only) ----------------------------------------------------
+
+_pr_cache = {}
+
+
+def pr_state(job, offline):
+    if offline or not job.pr:
+        return "?"
+    key = (job.project.path, job.pr)
+    if key in _pr_cache:
+        return _pr_cache[key]
+    try:
+        res = subprocess.run(["gh", "pr", "view", str(job.pr), "--json", "state,isDraft"],
+                             cwd=job.project.path, capture_output=True, text=True, timeout=20)
+        if res.returncode != 0:
+            state = "?"
+        else:
+            d = json.loads(res.stdout)
+            state = "DRAFT" if d.get("isDraft") else d.get("state", "?")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        state = "?"
+    _pr_cache[key] = state
+    return state
+
+
+# ---- add / remove ----------------------------------------------------------
+
+
+def tilde(path):
+    s = str(path)
+    home = str(Path.home())
+    return "~" + s[len(home):] if s.startswith(home + os.sep) else s
+
+
+def cmd_add(args, opts):
+    if not args:
+        die("usage: legio add <path>")
+    target = Path(args[0]).expanduser().resolve()
+    if not target.is_dir():
+        die(f"{target} is not a directory")
+    dest = target / ".centuria"
+    if dest.exists() and not opts["force"]:
+        die(f"{dest} already exists (use --force to overwrite)")
+    if not (target / ".git").exists():
+        die(f"{target} is not a git repo")
+
+    _, prof = load_profile(opts["host"] or "echo")
+    ignore = [".centuria/", ".worktrees/"] + list(prof.get("host_paths") or [])
+
+    if opts["dry_run"]:
+        print(f"would copy {TEMPLATE}/ -> {dest}/")
+        print(f"would add {', '.join(ignore)} to {target}/.git/info/exclude")
+        print(f"would record host {prof['host']} in .centuria/version.json")
+        return
+
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(TEMPLATE, dest,
+                    ignore=shutil.ignore_patterns("jobs", "__pycache__", "*.pyc"))
+    (dest / "jobs").mkdir()
+    for name in ("job", "gate", "run", "centuria"):
+        os.chmod(dest / "bin" / name, 0o755)
+    os.chmod(dest / "checks.sh", 0o755)
+
+    manifest = {
+        "legio": VERSION,
+        "installed_at": now(),
+        "source": str(HERE),
+        "template": "legio/centuria",
+        "host": prof["host"],
+        "host_paths": list(prof.get("host_paths") or []),
+    }
+    (dest / "version.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+    # Remember which host this project prefers, as a path to the one machine-level
+    # registry entry. The registry itself is never copied into the project.
+    cfg_path = dest / "config.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["default_host_spec"] = tilde((HOSTS_DIR / f"{prof['host']}.json").resolve())
+    cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n")
+
+    exclude = target / ".git" / "info" / "exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    current = exclude.read_text() if exclude.exists() else ""
+    added = []
+    for line in ignore:
+        if line not in current.split():
+            added.append(line)
+    if added:
+        exclude.write_text(current.rstrip("\n") + ("\n" if current.strip() else "")
+                           + "\n".join(added) + "\n")
+
+    print(f"{c(target.name, BOLD)}: centuria stationed at {dest}")
+    print(c(f"  git: {', '.join(ignore)} excluded locally "
+            f"(.git/info/exclude, never in history)", DIM))
+    print(c(f"  host: {prof['host']}" + (" (untested profile)" if prof.get("untested") else ""), DIM))
+    print()
+    print("next:")
+    print(f"  1. edit {dest / 'checks.sh'}  <- the project's real lint/test/build")
+    print(f"  2. edit {dest / 'config.json'} <- base_branch, protected_paths")
+    print(f"  3. legio labels {target.name}   <- create the three GitHub labels")
+    print(f"  4. legio doctor {target.name}")
+
+
+LABEL_STYLE = {
+    "queue": ("5319E7", "Let a centuria build this"),
+    "needs_info": ("FBCA04", "The centuria asked the author a question"),
+    "needs_human": ("D93F0B", "The centuria needs a human decision"),
+}
+
+
+def cmd_labels(projects, opts, args):
+    if not args:
+        die("usage: legio labels <project>")
+    proj = project_of(projects, args[0])
+    labels = proj.config.get("labels") or {}
+    if not labels:
+        die(f"{proj.name}/.centuria/config.json has no labels")
+    missing = [k for k in ("queue", "needs_info", "needs_human") if k not in labels]
+    if missing:
+        die(f"config.json labels is missing: {', '.join(missing)}")
+    for key, name in labels.items():
+        color, desc = LABEL_STYLE.get(key, ("EDEDED", ""))
+        res = subprocess.run(["gh", "label", "create", name, "--color", color,
+                              "--description", desc, "--force"],
+                             cwd=proj.path, capture_output=True, text=True)
+        if res.returncode != 0:
+            die(f"gh label create {name}: {(res.stderr or res.stdout).strip()}")
+        print(f"{proj.name}: label {c(name, CYAN)} ready")
+
+
+def cmd_remove(args, opts):
+    if not args:
+        die("usage: legio remove <path>")
+    target = Path(args[0]).expanduser().resolve()
+    dest = target / ".centuria"
+    if not dest.exists():
+        die(f"{dest} does not exist")
+    if not opts["force"]:
+        answer = input(f"remove {dest} and all job state? [y/N] ").strip().lower()
+        if answer != "y":
+            print("cancelled")
+            return
+    shutil.rmtree(dest)
+    print(f"{target.name}: centuria removed")
+
+
+# ---- reading a centuria ----------------------------------------------------
+#
+# legio never parses a job file and never names a stage. It asks the centuria
+# for a work order and for a view, and that is the whole contract.
+
+
+def job_json(proj, *args):
+    res = subprocess.run([str(proj.bin("job")), *args], cwd=str(proj.path),
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        die((res.stderr or res.stdout).strip() or f"job {' '.join(args)} failed")
+    return res.stdout.strip()
+
+
+def view(proj):
+    return json.loads(job_json(proj, "view"))
+
+
+def work_order(proj, job_id):
+    return json.loads(job_json(proj, "next", job_id))
+
+
+def settle(proj, job_id):
+    return json.loads(job_json(proj, "done", job_id))
+
+
+def cmd_ls(projects, opts, args):
+    if not projects:
+        print("no centuriae (legio add <path>)")
+        return
+    rows = []
+    for p in projects:
+        jobs = view(p)
+        rows.append([p.name,
+                     str(len([j for j in jobs if j["active"]])),
+                     str(len([j for j in jobs if j["waiting"]])),
+                     str(len([j for j in jobs if j["terminal"]])),
+                     f"${sum(j['cost_usd'] for j in jobs):.2f}",
+                     p.version])
+    print(table(["centuria", "active", "waiting", "done", "cost", "legio"], rows))
+
+
+def cmd_status(projects, opts, args):
+    rows = []
+    for p in projects:
+        if opts["project"] and p.name != opts["project"]:
+            continue
+        for j in view(p):
+            if not opts["all"] and not j["active"]:
+                continue
+            reviews = ",".join(f"{k}:{v}" for k, v in (j["reviews"] or {}).items()) or "—"
+            rows.append([p.name, j["id"], f"#{j['issue']}" if j["issue"] else "—",
+                         j["stage"] + (f" #{j['pr']}" if j["pr"] else ""),
+                         f"{j['round']}/{j['round_limit']}", str(j["gate"] or "—"),
+                         reviews, f"${j['cost_usd']:.2f}"])
+    if not rows:
+        print("nothing running" + ("" if opts["all"] else " (try --all)"))
+        return
+    print(table(["centuria", "job", "issue", "stage", "round", "gate", "reviews", "cost"],
+                rows))
+
+
+def cmd_inbox(projects, opts, args):
+    items = []
+    for p in projects:
+        for j in view(p):
+            if not j["waiting"]:
+                continue
+            try:
+                order = work_order(p, j["id"])
+                why = order.get("why") or "needs you"
+            except SystemExit:
+                why = "needs you"
+            items.append((p.name, j["id"], j["stage"], why, j.get("pr")))
+    if not items:
+        print(c("inbox empty — nothing waits on you", GREEN))
+        return
+    for pname, jid, stage, why, pr in items:
+        sel = f"{pname}:{jid}"
+        pad = " " * max(0, 34 - len(sel))
+        hint = f"gh pr view {pr}" if pr else f"legio next {sel}"
+        print(f"  {c(sel, CYAN)}{pad} {why}" + c(f"  [{stage}]", DIM))
+        print(c(f"  {' ' * 34} {hint}", DIM))
+
+
+# ---- the two calls legio makes into a centuria -----------------------------
+
+
+def pick_job(proj, fixed):
+    jobs = view(proj)
+    if fixed:
+        ref = fixed.lstrip("#")
+        job = next((j for j in jobs if j["id"] == fixed or str(j["issue"]) == ref), None)
+        if job is None:
+            die(f"no job {fixed!r} in {proj.name}")
+        return job
+    live = [j for j in jobs if j["active"] or j["waiting"]]
+    if not live:
+        return None
+    if len(live) > 1:
+        die(f"{proj.name} has {len(live)} live jobs; pick one: "
+            + ", ".join(j["id"] for j in live))
+    return live[0]
+
+
+def cmd_next(projects, opts, args):
+    if not args:
+        die("usage: legio next <project>[:<job>]")
+    sel = args[0]
+    proj = project_of(projects, sel.split(":", 1)[0])
+    fixed = sel.split(":", 1)[1] if ":" in sel else None
+    job = pick_job(proj, fixed)
+    if job is None:
+        die(f"{proj.name} has no live jobs")
+    order = work_order(proj, job["id"])
+    print(c(f"{proj.name}:{order['id']}  stage={order['stage']}  round={order['round']}", BOLD))
+    print(c(f"  {order.get('why') or order.get('role') or order['kind']}", DIM))
+    if order["kind"] != "agent":
+        return
+    print()
+    print(c("─" * 72, DIM))
+    print(order["header"])
+    print()
+    print(Path(order["role_file"]).read_text().rstrip())
+    print()
+    print(order["task"])
+
+
+# ---- agent adapters --------------------------------------------------------
+
+DEFAULT_PROFILE = "echo"
+
+
+def load_profile(host):
+    path = HOSTS_DIR / f"{host}.json"
+    if not path.exists():
+        have = ", ".join(p.stem for p in sorted(HOSTS_DIR.glob("*.json"))) or "none"
+        die(f"no host {host!r} in {HOSTS_DIR} (have: {have})")
+    try:
+        prof = json.loads(path.read_text())
+    except json.JSONDecodeError as e:
+        die(f"{path} is not valid JSON: {e}")
+    return path, prof
+
+
+def cmd_run(projects, opts, args):
+    """Forward to the centuria's own runner. legio does not run agents."""
+    if not args:
+        die("usage: legio run <project>[:<job>] [--agent <host>] [--max-steps N] "
+            "[--yolo] [--dry-run]")
+    host = opts["agent"] or DEFAULT_PROFILE
+    spec, prof = load_profile(host)
+    if prof.get("untested"):
+        print(c(f"warning: {host} is marked untested", YELLOW), file=sys.stderr)
+    proj = project_of(projects, args[0].split(":", 1)[0])
+    dispatch(proj)
+    cmd = [str(proj.bin("run")), "--host-spec", str(spec)]
+    if opts["max_steps"] is not None:
+        cmd += ["--max-steps", str(opts["max_steps"])]
+    if opts["yolo"]:
+        cmd.append("--yolo")
+    if opts["dry_run"]:
+        cmd.append("--dry-run")
+    if ":" in args[0]:
+        cmd.append(args[0].split(":", 1)[1])
+    else:
+        # No specific job: let the centuria schedule everything it can, up to
+        # its own concurrency. legio does not decide the order.
+        cmd.append("--all")
+    sys.exit(subprocess.run(cmd, cwd=str(proj.path)).returncode)
+
+
+def cmd_hosts(projects, opts, args):
+    rows = []
+    for path in sorted(HOSTS_DIR.glob("*.json")):
+        try:
+            prof = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            rows.append([path.stem, "INVALID JSON", "", ""])
+            continue
+        tiers = prof.get("model_tiers") or {}
+        rows.append([prof.get("host", path.stem),
+                     ", ".join(f"{k}={v}" for k, v in tiers.items()) or "-",
+                     "yes" if prof.get("untested") else "",
+                     prof.get("about", "")])
+    print(table(["host", "model tiers", "untested", "about"], rows))
+
+
+# ---- thin wrappers over one centuria ---------------------------------------
+
+
+def _job(proj, *args, input_text=None):
+    res = subprocess.run([str(proj.bin("job")), *args], cwd=str(proj.path),
+                         capture_output=True, text=True, input=input_text)
+    out = (res.stdout or res.stderr).strip()
+    if res.returncode != 0:
+        die(out or f"job {' '.join(args)} failed")
+    return out
+
+
+def cmd_route(projects, opts, args):
+    proj, jid = resolve(projects, args[0])
+    print(_job(proj, "route", jid))
+
+
+def cmd_gate(projects, opts, args):
+    proj, jid = resolve(projects, args[0])
+    res = subprocess.run([str(proj.bin("gate")), jid],
+                         cwd=str(proj.path), capture_output=True, text=True)
+    print((res.stdout or res.stderr).strip())
+    sys.exit(res.returncode)
+
+
+def cmd_advance(projects, opts, args):
+    if len(args) != 2:
+        die("usage: legio advance <project>:<job> <stage>")
+    proj, jid = resolve(projects, args[0])
+    print(_job(proj, "advance", jid, args[1]))
+
+
+def cmd_say(projects, opts, args):
+    if len(args) < 2:
+        die("usage: legio say <project>:<job> <text>")
+    proj, jid = resolve(projects, args[0])
+    print(_job(proj, "feedback", jid, input_text=" ".join(args[1:]) + "\n"))
+
+
+def cmd_reject(projects, opts, args):
+    if not args:
+        die("usage: legio reject <project>:<job> [reason]")
+    proj, jid = resolve(projects, args[0])
+    why = " ".join(args[1:]).strip() or "rejected by the operator"
+    print(_job(proj, "reject", jid, input_text=why + "\n"))
+
+
+def dispatch(proj):
+    """Tell this centuria which labelled issues it should turn into jobs.
+
+    This is the one thing legio actually decides: what needs doing, and where.
+    Everything after `job create` is the centuria's business.
+    """
+    rows = json.loads(job_json(proj, "queue", "--json"))
+    started = []
+    for row in rows:
+        if row["kind"] != "new":
+            continue
+        res = subprocess.run([str(proj.bin("job")), "create", str(row["issue"])],
+                             cwd=str(proj.path), capture_output=True, text=True)
+        if res.returncode != 0:
+            tail = (res.stderr or res.stdout).strip().splitlines()
+            print(c(f"  {proj.name}: issue #{row['issue']} not started - "
+                    f"{tail[-1] if tail else 'unknown'}", YELLOW))
+            continue
+        jid = res.stdout.strip()
+        started.append(jid)
+        print(c(f"  {proj.name}: issue #{row['issue']} -> {jid}", DIM))
+    return started
+
+
+def cmd_sync(projects, opts, args):
+    name = args[0] if args else None
+    for p in projects:
+        if name and p.name != name:
+            continue
+        started = dispatch(p)
+        res = subprocess.run([str(p.bin("job")), "queue"], cwd=str(p.path),
+                             capture_output=True, text=True)
+        rows = [r for r in (res.stdout or "").splitlines() if r.strip()]
+        print(c(p.name, BOLD), "->",
+              f"{len(started)} new job(s), {len(rows)} row(s) in the queue")
+        for row in rows:
+            print(c("  " + row.replace("\t", "  "), DIM))
+
+
+def cmd_doctor(projects, opts, args):
+    only = opts["project"] or (args[0] if args else None)
+    problems_total = 0
+    for p in projects:
+        if only and p.name != only:
+            continue
+        problems = []
+        for name in ("job", "gate", "run", "centuria"):
+            f = p.bin(name)
+            if not f.exists():
+                problems.append(f".centuria/bin/{name} missing")
+            elif not os.access(str(f), os.X_OK):
+                problems.append(f".centuria/bin/{name} not executable")
+        checks = p.centuria / "checks.sh"
+        if not checks.exists():
+            problems.append(".centuria/checks.sh missing")
+        elif "no checks yet" in checks.read_text(errors="ignore"):
+            problems.append(".centuria/checks.sh is still the placeholder")
+        for pat in (p.config.get("protected_paths") or []):
+            prefix = pat.split("*")[0].split("?")[0].rstrip("/")
+            if prefix and not (p.path / prefix).exists():
+                problems.append(f"protected path {pat!r} matches nothing")
+        if not p.manifest.get("legio"):
+            problems.append(".centuria/version.json missing (no version stamp)")
+        roles = sorted((p.centuria / "roles").glob("*.md"))
+        if len(roles) != 8:
+            problems.append(f"expected 8 role files, found {len(roles)}")
+        try:
+            cfg = p.config
+            for table, key in (("surface_reviewers", None), ("routing", None)):
+                for entry, roles_map in (cfg.get(table) or {}).items():
+                    for role in roles_map:
+                        if not (p.centuria / "roles" / f"{role}.md").exists():
+                            problems.append(f"{table} {entry} routes to missing role {role}")
+            for stage, role in (cfg.get("stages") or {}).items():
+                if not (p.centuria / "roles" / f"{role}.md").exists():
+                    problems.append(f"stages {stage} names missing role {role}")
+            known = set(cfg.get("tiers") or [])
+            for tier in [t for m in (cfg.get("routing") or {}).values()
+                         for t in m.values()] + \
+                        [t for m in (cfg.get("surface_reviewers") or {}).values()
+                         for t in m.values()] + \
+                        list((cfg.get("role_tiers") or {}).values()):
+                if tier not in known:
+                    problems.append(f"tier {tier!r} is not in tiers")
+        except (KeyError, TypeError):
+            problems.append("config.json routing/stages is malformed")
+        status = c("ok", GREEN) if not problems else c("needs attention", YELLOW)
+        print(f"{c(p.name, BOLD)}   legio {p.version}   {len(view(p))} jobs   {status}")
+        for prob in problems:
+            print(c(f"  - {prob}", DIM))
+        problems_total += len(problems)
+    sys.exit(1 if problems_total else 0)
+
+
+# ---- plumbing --------------------------------------------------------------
+
+
+def parse(argv):
+    opts = {"root": None, "project": None, "offline": False, "all": False,
+            "dry_run": False, "force": False, "agent": None, "host": None,
+            "max_steps": None, "yolo": False}
+    value_flags = {"--root": "root", "--project": "project", "--agent": "agent",
+                   "--host": "host", "--max-steps": "max_steps"}
+    bool_flags = {"--offline": "offline", "--all": "all", "--dry-run": "dry_run",
+                  "--force": "force", "--yolo": "yolo"}
+    rest, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a in value_flags and i + 1 < len(argv):
+            v = argv[i + 1]
+            if value_flags[a] == "max_steps":
+                try:
+                    v = int(v)
+                except ValueError:
+                    die(f"--max-steps needs a number, got {v!r}")
+            opts[value_flags[a]] = v
+            i += 2
+        elif a in bool_flags:
+            opts[bool_flags[a]] = True
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return opts, rest
+
+
+COMMANDS = {
+    "add": None, "new": None, "remove": None,
+    "ls": None, "status": None, "inbox": None, "next": None,
+    "route": None, "gate": None, "advance": None,
+    "say": None, "reject": None, "sync": None, "doctor": None,
+    "labels": None, "run": None, "hosts": None,
+}
+
+
+def main(argv):
+    opts, rest = parse(argv)
+    if not rest or rest[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    cmd = rest[0]
+    if cmd == "version":
+        print(f"legio {VERSION}")
+        return
+    if cmd not in COMMANDS:
+        die(f"unknown command {cmd!r}")
+
+    if cmd in ("add", "new"):
+        cmd_add(rest[1:], opts)
+        return
+    if cmd == "hosts":
+        cmd_hosts([], opts, rest[1:])
+        return
+
+    cfg = load_config()
+    projects = discover(opts["root"] or cfg["projects_root"])
+    opts["stale_minutes"] = cfg.get("stale_minutes", 240)
+
+    if cmd == "remove":
+        cmd_remove(rest[1:], opts)
+    elif not projects:
+        die(f"no centuriae under {opts['root'] or cfg['projects_root']} "
+            f"(legio add <path>)")
+    elif cmd == "ls":
+        cmd_ls(projects, opts, rest[1:])
+    elif cmd == "status":
+        cmd_status(projects, opts, rest[1:])
+    elif cmd == "inbox":
+        cmd_inbox(projects, opts, rest[1:])
+    elif cmd == "next":
+        cmd_next(projects, opts, rest[1:])
+    elif cmd == "route":
+        cmd_route(projects, opts, rest[1:])
+    elif cmd == "gate":
+        cmd_gate(projects, opts, rest[1:])
+    elif cmd == "advance":
+        cmd_advance(projects, opts, rest[1:])
+    elif cmd == "say":
+        cmd_say(projects, opts, rest[1:])
+    elif cmd == "reject":
+        cmd_reject(projects, opts, rest[1:])
+    elif cmd == "sync":
+        cmd_sync(projects, opts, rest[1:])
+    elif cmd == "doctor":
+        cmd_doctor(projects, opts, rest[1:])
+    elif cmd == "labels":
+        cmd_labels(projects, opts, rest[1:])
+    elif cmd in ("run", "go"):
+        cmd_run(projects, opts, rest[1:])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -1,0 +1,58 @@
+{
+  "concurrency": 2,
+  "max_rounds": 3,
+  "base_branch": "main",
+  "merge_method": "merge",
+  "merge_policy": "human",
+  "default_host_spec": null,
+  "labels": {
+    "queue": "centuria",
+    "needs_info": "centuria:needs-info",
+    "needs_human": "centuria:needs-human"
+  },
+  "routing": {
+    "low": {
+      "probator": "light"
+    },
+    "medium": {
+      "probator": "medium"
+    },
+    "high": {
+      "probator": "strong"
+    }
+  },
+  "surface_reviewers": {
+    "ui": {
+      "mensor": "medium",
+      "librator": "light"
+    },
+    "security": {
+      "medicus": "strong"
+    }
+  },
+  "stages": {
+    "intake": "tesserarius",
+    "spec": "signifer",
+    "build": "fabri",
+    "approve": "primus-pilus"
+  },
+  "role_tiers": {
+    "tesserarius": "strong",
+    "signifer": "strong",
+    "fabri": "strong",
+    "primus-pilus": "strong"
+  },
+  "tiers": [
+    "light",
+    "medium",
+    "strong"
+  ],
+  "protected_paths": [
+    ".centuria/checks.sh",
+    ".centuria/config.json"
+  ],
+  "ports": {
+    "base": 5100,
+    "step": 10
+  }
+}

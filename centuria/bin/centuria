@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""centuria — one project's factory. The only entry point you need.
+
+Usage:
+  centuria run [<job>]                      drive a job: next -> agent -> done
+  centuria run --all                        drive up to `concurrency` jobs at once
+  centuria next <job>                       what should happen now (JSON)
+  centuria done <job>                       settle: advance if the artifacts justify it
+  centuria gate <job>                       run checks.sh in the job's worktree
+  centuria route <job>                      risk + surfaces -> reviewers
+  centuria view                             every job as JSON
+  centuria summary                          every job as a table
+  centuria queue                            what is in the queue
+  centuria create <issue>                   turn a labelled issue into a job
+  centuria advance <job> <stage>            move a job by hand (refuses illegal moves)
+  centuria feedback <job>                   send a job back to the builder (stdin)
+  centuria reject <job>                     reject a job that waits on you (stdin)
+  centuria merge <job>                      merge the PR (merge_policy: legio only)
+  centuria sync <job>                       refresh from the job's artifacts
+  centuria roster <job> <json>              record which roles the job fields
+  centuria cost <job> <usd>                 record what this job cost
+
+Anything not listed is forwarded to bin/job. `run` and `gate` have their own
+scripts. There is no host registry here: `run` takes a path via --host-spec, or
+falls back to config.json's `default_host_spec` (which `legio add --host` sets).
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+BIN = Path(__file__).resolve().parent
+JOB = BIN / "job"
+GATE = BIN / "gate"
+RUN = BIN / "run"
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "gate":
+        target, args = GATE, rest
+    elif cmd == "run":
+        target, args = RUN, rest
+    else:
+        target, args = JOB, [cmd, *rest]
+    if not target.exists():
+        print(f"centuria: {target} is missing", file=sys.stderr)
+        sys.exit(1)
+    sys.exit(subprocess.run([str(target), *args], cwd=str(BIN.parent.parent)).returncode)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

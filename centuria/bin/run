@@ -1,0 +1,304 @@
+#!/usr/bin/env python3
+"""Run one job as far as it can go: ask bin/job, hand it to a host, settle.
+
+Usage:
+  run [<job>] [--host-spec <path>] [--max-steps N] [--yolo] [--dry-run]
+  run --all   [--host-spec <path>] [--max-steps N]
+
+<job> is a job id (001-add-subtract) or an issue number (12). Omitted: the one
+live job, if there is exactly one. --all runs up to config.json's `concurrency`
+jobs at once, each in its own process, and waits for them.
+
+--host-spec is optional: without it, .centuria/config.json's `default_host_spec`
+is used, so the daily command is just `centuria run`.
+
+The host spec is a JSON file that says how to invoke one agent CLI: the binary,
+its flags, how the prompt gets in, how the model is named. **centuria does not
+own a host registry** - the caller passes a spec in. legio passes its own
+legio/hosts/<name>.json; when you drive centuria by hand you can pass any path.
+
+The loop is always the same:
+
+    job next  -> which role, which tier, which directory, what to say
+    <host>    -> one process, one role, writes one file, exits
+    job done  -> centuria reads the artifact and decides where the job goes
+
+It stops when the job needs a human, is finished, or the step budget runs out.
+"""
+
+import json
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+CENTURIA = Path(__file__).resolve().parents[1]
+REPO = CENTURIA.parent
+JOB = CENTURIA / "bin" / "job"
+GATE = CENTURIA / "bin" / "gate"
+
+BOLD, DIM, RED, GREEN, YELLOW = "1", "2", "31", "32", "33"
+TTY = sys.stdout.isatty()
+
+
+def c(text, code):
+    return f"\033[{code}m{text}\033[0m" if TTY else str(text)
+
+
+def die(msg):
+    print(f"run: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def job_run(*args, capture=True):
+    res = subprocess.run([str(JOB), *args], cwd=str(REPO),
+                         capture_output=capture, text=True)
+    if res.returncode != 0:
+        die((res.stderr or res.stdout or "").strip() or f"job {' '.join(args)} failed")
+    return res.stdout
+
+
+def job_json(*args):
+    return json.loads(job_run(*args))
+
+
+def pick(fixed):
+    jobs = job_json("view")
+    if fixed:
+        ref = str(fixed).lstrip("#")
+        for j in jobs:
+            if j["id"] == str(fixed) or str(j["issue"]) == ref:
+                return j
+        die(f"no job {fixed!r}")
+    live = [j for j in jobs if j["active"] or j["waiting"]]
+    if not live:
+        return None
+    if len(live) > 1:
+        die("more than one live job; pick one: " + ", ".join(j["id"] for j in live))
+    return live[0]
+
+
+# ---- host adapter ----------------------------------------------------------
+
+
+def load_host(path):
+    p = Path(path).expanduser()
+    if not p.exists():
+        die(f"host spec {p} does not exist")
+    try:
+        prof = json.loads(p.read_text())
+    except json.JSONDecodeError as e:
+        die(f"{p} is not valid JSON: {e}")
+    for key in ("command", "role", "prompt"):
+        if key not in prof:
+            die(f"{p} is missing {key!r}")
+    prof["_path"] = p
+    return prof
+
+
+def expand(tokens, subs):
+    out = []
+    for tok in tokens:
+        try:
+            out.append(str(tok).format(**subs))
+        except (KeyError, IndexError):
+            out.append(str(tok))
+    return out
+
+
+def build(prof, order, yolo):
+    rf = Path(order["role_file"])
+    if not rf.exists():
+        die(f"{rf} is missing")
+    tiers = prof.get("model_tiers") or {}
+    model = tiers.get(order["tier"]) or tiers.get("medium") or ""
+    cwd = Path(order["cwd"])
+    subs = {"role_file": str(rf), "cwd": str(cwd), "model": model,
+            "job": order["id"], "stage": order["stage"],
+            "centuria": str(CENTURIA), "host_dir": str(Path(prof["_path"]).parent)}
+
+    cmd = expand(prof["command"], subs)
+    if yolo:
+        cmd += expand(prof.get("yolo") or [], subs)
+    if (prof.get("cwd") or {}).get("mode") == "flag":
+        cmd += expand(prof["cwd"].get("flag") or [], subs)
+    if (prof.get("model") or {}).get("flag"):
+        cmd += expand(prof["model"]["flag"], subs)
+
+    task = order["header"] + "\n\n" + order["task"]
+    role_cfg = prof["role"]
+    if role_cfg.get("mode") == "system":
+        cmd += expand(role_cfg.get("flag") or [], subs)
+        body = task
+    else:
+        body = rf.read_text().rstrip() + "\n\n---\n\n" + task
+    return cmd, body, cwd, model
+
+
+def invoke(prof, cmd, body, cwd):
+    via = (prof.get("prompt") or {}).get("via", "stdin")
+    timeout = prof.get("timeout_seconds", 3600)
+    full = cmd + [body] if via == "arg" else cmd
+    kwargs = {"cwd": str(cwd), "capture_output": True, "text": True, "timeout": timeout}
+    if via != "arg":
+        kwargs["input"] = body
+    try:
+        return subprocess.run(full, **kwargs)
+    except FileNotFoundError:
+        die(f"{cmd[0]} not found on PATH")
+    except subprocess.TimeoutExpired:
+        die(f"{cmd[0]} timed out after {timeout}s")
+
+
+# ---- the loop --------------------------------------------------------------
+
+
+# ---- many jobs at once -----------------------------------------------------
+
+
+def pump(jid, proc):
+    for line in proc.stdout:
+        print(f"  {jid} | {line.rstrip()}", flush=True)
+
+
+def run_many(spec, budget, yolo, dry):
+    jobs = [j for j in job_json("view") if j["active"]]
+    waiting = [j for j in job_json("view") if j["waiting"]]
+    if not jobs:
+        print(c("nothing active", GREEN)
+              + (c(f"  ({len(waiting)} waiting on you)", DIM) if waiting else ""))
+        return
+    cap = CONFIG.get("concurrency", 1)
+    picks = jobs[:cap]
+    if len(jobs) > cap:
+        print(c(f"{len(jobs)} active, starting {cap} (concurrency) — "
+                f"run again when one finishes", YELLOW))
+    print(c(f"starting {len(picks)}: " + ", ".join(j["id"] for j in picks), BOLD))
+
+    procs = []
+    for j in picks:
+        cmd = [sys.executable, str(Path(__file__).resolve()), j["id"],
+               "--host-spec", spec, "--max-steps", str(budget)]
+        if yolo:
+            cmd.append("--yolo")
+        if dry:
+            cmd.append("--dry-run")
+        procs.append((j["id"], subprocess.Popen(
+            cmd, cwd=str(REPO), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1)))
+    threads = [threading.Thread(target=pump, args=(jid, p), daemon=True)
+               for jid, p in procs]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    failed = [jid for jid, p in procs if p.returncode not in (0, None)]
+    print()
+    print(c(f"done: {len(picks) - len(failed)} ok, {len(failed)} failed", BOLD))
+    for j in job_json("view"):
+        if j["id"] in {p[0] for p in procs}:
+            print(f"  {j['id']:<28} {j['stage']:<12} round {j['round']}/{j['round_limit']}")
+
+
+# ---- the loop --------------------------------------------------------------
+
+CONFIG = json.loads((CENTURIA / "config.json").read_text())
+
+
+def main(argv):
+    spec = None
+    budget = 10
+    yolo = dry = many = False
+    rest, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--host-spec" and i + 1 < len(argv):
+            spec = argv[i + 1]
+            i += 2
+        elif a == "--max-steps" and i + 1 < len(argv):
+            try:
+                budget = int(argv[i + 1])
+            except ValueError:
+                die(f"--max-steps needs a number, got {argv[i + 1]!r}")
+            i += 2
+        elif a == "--yolo":
+            yolo, i = True, i + 1
+        elif a == "--dry-run":
+            dry, i = True, i + 1
+        elif a == "--all":
+            many, i = True, i + 1
+        else:
+            rest.append(a)
+            i += 1
+
+    if not spec:
+        spec = CONFIG.get("default_host_spec")
+        if not spec:
+            die("no --host-spec and .centuria/config.json has no default_host_spec.\n"
+                "      try: --host-spec <path to a host json>, "
+                "e.g. ~/dev/legio/hosts/claude-code.json")
+        print(c(f"using default_host_spec {spec}", DIM))
+    spec = str(Path(spec).expanduser())
+    prof = load_host(spec)
+    if prof.get("untested"):
+        print(c(f"warning: {spec} is marked untested", YELLOW), file=sys.stderr)
+
+    if many:
+        if rest:
+            die("--all takes no job argument")
+        run_many(spec, budget, yolo, dry)
+        return
+
+    fixed = rest[0] if rest else None
+    for n in range(budget):
+        job = pick(fixed)
+        if job is None:
+            print(c("nothing to do", GREEN))
+            return
+        order = job_json("next", job["id"])
+        kind = order["kind"]
+        tag = f"[{n + 1}/{budget}] {order['id']} {order['stage']}"
+
+        if kind in ("human", "done"):
+            print(c(f"{tag}: {order.get('why') or kind}", BOLD))
+            print(c("  stopped - this one needs you", YELLOW))
+            return
+        if kind == "unknown":
+            die(f"{order['id']}: {order.get('why')}")
+        if kind == "noop":
+            job_run("done", order["id"])
+            continue
+        if kind == "gate":
+            print(c(f"{tag}: gate", BOLD))
+            if dry:
+                print(c(f"  would run: {order['bin']} {' '.join(order['argv'])}", DIM))
+                continue
+            res = subprocess.run([order["bin"], *order["argv"]],
+                                 cwd=str(REPO), capture_output=True, text=True)
+            lines = (res.stdout or res.stderr).strip().splitlines()
+            print(c("  " + (lines[0] if lines else "gate produced no output"), DIM))
+            job_run("done", order["id"])
+            continue
+
+        cmd, body, cwd, model = build(prof, order, yolo)
+        print(c(f"{tag}: {order['role']}", BOLD))
+        print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}", DIM))
+        if dry:
+            print(c("  would run: " + " ".join(cmd), DIM))
+            print()
+            print(body)
+            return
+        res = invoke(prof, cmd, body, cwd)
+        if res.returncode != 0:
+            print(c(f"  agent failed (exit {res.returncode})", RED))
+            for line in (res.stderr or res.stdout or "").strip().splitlines()[-20:]:
+                print(c("  " + line, DIM))
+            print(c("  the job was not settled; fix it and run again", YELLOW))
+            return
+        job_run("done", order["id"])
+
+    print(c(f"step budget of {budget} reached", YELLOW))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

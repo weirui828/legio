@@ -1,0 +1,13 @@
+{
+  "host": "claude-code",
+  "about": "Claude Code, non-interactive (-p). The role file becomes a real system prompt.",
+  "command": ["claude", "-p"],
+  "yolo": ["--dangerously-skip-permissions"],
+  "role": {"mode": "system", "flag": ["--append-system-prompt-file", "{role_file}"]},
+  "prompt": {"via": "stdin"},
+  "cwd": {"mode": "process"},
+  "model": {"flag": ["--model", "{model}"]},
+  "model_tiers": {"light": "haiku", "medium": "sonnet", "strong": "opus"},
+  "host_paths": [".claude/settings.local.json"],
+  "timeout_seconds": 3600
+}

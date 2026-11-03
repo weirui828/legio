@@ -1,0 +1,14 @@
+{
+  "host": "dsh",
+  "about": "DeepSeek Harness headless: `dsh headless <task>` answers one task, prints the result and exits.",
+  "command": ["dsh", "headless"],
+  "yolo": [],
+  "role": {"mode": "concat"},
+  "prompt": {"via": "arg"},
+  "cwd": {"mode": "process"},
+  "model": {"flag": []},
+  "model_tiers": {"light": "default", "medium": "default", "strong": "default"},
+  "host_paths": [".dsh/"],
+  "timeout_seconds": 3600,
+  "_note": "dsh picks the model from its profile, not a flag. Point the tiers at profiles if you run more than one."
+}
