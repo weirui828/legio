@@ -394,3 +394,22 @@ legio run <project> --agent fake --max-steps 20
 
 Every agent invocation is written next to the job as `agent-<round>-<role>.log`, holding
 the command, stdout and stderr, so any failure can be read back later.
+
+## What a job cost
+
+```bash
+legio/tests/token-report.py 001-add-a-json-flag
+```
+
+Reads the host's own session logs and prints, per role: agent processes, model requests
+("steps"), how many steps actually executed checks, and input / output / cache-read tokens.
+It is host-specific and a development tool, not part of the pipeline.
+
+It exists because **the bill is not proportional to the token total**: cache reads usually
+cost a fraction of fresh input, while output costs more per token. Multiply each column by
+your host's price; do not read the token total as money.
+
+The useful signal is steps. Each step resends the whole conversation, so cost grows
+roughly quadratically inside one agent process. Cutting redundant steps is the only lever
+that compounds — but a step cut that causes another build round is a loss, so always
+compare "cost" with "did the PR pass review first time".
