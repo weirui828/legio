@@ -16,7 +16,7 @@
   legio doctor [<project>]    is this centuria still healthy
   legio version
 
-Options: --root DIR, --offline, --all, --dry-run, --force
+Options: --root DIR, --offline, --all, --dry-run, --force, --json (hosts only)
 
 Discovery: every <projects_root>/*/.centuria/config.json is a centuria.
 Nothing legio writes into a project ever enters git: the files are hidden and
@@ -511,8 +511,25 @@ def cmd_run(projects, opts, args):
 
 
 def cmd_hosts(projects, opts, args):
+    paths = sorted(HOSTS_DIR.glob("*.json"))
+    if opts["json"]:
+        items = []
+        for path in paths:
+            try:
+                prof = json.loads(path.read_text())
+            except json.JSONDecodeError:
+                print(f"legio: warning: skipping invalid JSON in {path}",
+                      file=sys.stderr)
+                continue
+            items.append({
+                "host": prof["host"] if "host" in prof else path.stem,
+                "model_tiers": prof["model_tiers"] if "model_tiers" in prof else {},
+                "untested": bool(prof["untested"]) if "untested" in prof else False,
+            })
+        print(json.dumps(items))
+        return
     rows = []
-    for path in sorted(HOSTS_DIR.glob("*.json")):
+    for path in paths:
         try:
             prof = json.loads(path.read_text())
         except json.JSONDecodeError:
@@ -673,11 +690,11 @@ def cmd_doctor(projects, opts, args):
 def parse(argv):
     opts = {"root": None, "project": None, "offline": False, "all": False,
             "dry_run": False, "force": False, "agent": None, "host": None,
-            "max_steps": None, "yolo": False}
+            "max_steps": None, "yolo": False, "json": False}
     value_flags = {"--root": "root", "--project": "project", "--agent": "agent",
                    "--host": "host", "--max-steps": "max_steps"}
     bool_flags = {"--offline": "offline", "--all": "all", "--dry-run": "dry_run",
-                  "--force": "force", "--yolo": "yolo"}
+                  "--force": "force", "--yolo": "yolo", "--json": "json"}
     rest, i = [], 0
     while i < len(argv):
         a = argv[i]

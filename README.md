@@ -187,7 +187,7 @@ legio status [--all]               every job
 legio inbox                        what is waiting on you, worst first
 legio run <project>[:<job>]        turn new issues into jobs, then let centuria drive
 legio next <project>[:<job>]       the next step, with a pasteable prompt
-legio hosts                        the available host adapters
+legio hosts [--json]               the available host adapters (JSON with --json)
 legio labels <project>             create the three GitHub labels
 legio sync [<project>]             turn new labelled issues into jobs, show the queue
 legio say <project>:<job> <text>   feedback: the job goes back to build
