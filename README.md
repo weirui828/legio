@@ -188,6 +188,7 @@ legio add <path> [--host <name>]   station a centuria
 legio remove <path>                take it out again
 legio ls                           centuriae and their overall state
 legio status [--all]               every job
+legio api [--port PORT] [--root DIR] local read-only monitoring
 legio inbox                        what is waiting on you, worst first
 legio run <project>[:<job>]        turn new issues into jobs, then let centuria drive
 legio next <project>[:<job>]       the next step, with a pasteable prompt
@@ -198,6 +199,74 @@ legio say <project>:<job> <text>   feedback: the job goes back to build
 legio reject <project>:<job> <text>  reject a job that waits on you
 legio doctor [<project>]           is this centuria still healthy
 ```
+
+---
+
+## Local monitoring API
+
+Start the listener explicitly in a terminal; it stays in the foreground. Stop it
+with **Ctrl-C**. Other commands do not start a listener.
+
+```bash
+./legio api                         # http://127.0.0.1:8765
+./legio api --port 8766 --root ~/dev
+curl 'http://127.0.0.1:8765/api/status'
+curl 'http://127.0.0.1:8765/api/status?project=webapp'
+./legio api --help
+```
+
+The port defaults to **8765** and must be 1–65535. Invalid ports, missing roots,
+and bind failures exit with a CLI error. Root precedence is `--root`, then
+`LEGIO_ROOT`, then `projects_root` in legio's `config.json`. An existing empty
+root is valid. Projects are discovered at startup using the usual immediate-child
+`.centuria/config.json` discovery. Each poll reads fresh status through each
+selected project's fixed `.centuria/bin/job view` command, with a **5-second
+per-project timeout**. Aggregate reads can take up to five seconds per project.
+Restart the listener to discover newly installed projects.
+
+Successful GET responses have status 200 and `Content-Type: application/json`:
+
+```json
+{"projects":[{"name":"webapp","jobs":[{"id":"001-example","issue":3,"title":"Example","stage":"spec","round":0,"round_limit":3,"pr":null,"gate":null,"reviews":{},"cost_usd":0.0,"active":true,"waiting":false,"terminal":false}]}]}
+```
+
+Only `name` and `jobs` appear on each project. Every job appears, including waiting
+and terminal jobs, with only these fields:
+
+| Fields | JSON type |
+|---|---|
+| `id`, `title`, `stage` | string |
+| `issue`, `pr` | integer or null |
+| `round`, `round_limit` | integer |
+| `gate` | string or null |
+| `reviews` | object mapping reviewer names to strings, or null |
+| `cost_usd` | finite number |
+| `active`, `waiting`, `terminal` | boolean |
+
+Values and nulls are retained from `job view`; legio does not infer stages or
+process liveness. Null means the underlying view has no value. Empty roots return
+`{"projects": []}`; projects without jobs have `"jobs": []`. The optional
+`project=NAME` selector matches a discovered name exactly (URL-encode the name).
+
+Errors use `{"error": {"code": "...", "message": "..."}}` with JSON content type:
+
+| HTTP status | Code | Meaning |
+|---|---|---|
+| 400 | `invalid_query` | Malformed query, unknown parameter, empty or repeated project selector |
+| 404 | `not_found` | Unknown path or undiscovered project name |
+| 405 | `method_not_allowed` | Unsupported method, including POST, PUT, PATCH, DELETE |
+| 502 | `status_read_failed` | Project job command unavailable, failed, timed out, or returned unusable JSON |
+
+A 502 identifies the failed project with a safe description; it never includes
+raw subprocess output or a traceback. Aggregate reads fail explicitly if any
+project fails, and later requests can still succeed.
+
+The listener is **unauthenticated and bound only to `127.0.0.1`** with no public
+binding option. Other local clients can read it. Do not expose it through a proxy
+or port forwarding. This API only reads recorded monitoring fields: it does not
+run the pipeline, sync GitHub, transition jobs, or expose configuration, secrets,
+prompts, logs, artifact bodies, or other view fields. Request selectors never
+supply filesystem paths or executable names.
 
 ---
 

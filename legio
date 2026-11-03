@@ -5,6 +5,7 @@
   legio remove <path>         take it out again (--force to skip the prompt)
   legio ls                    centuriae and their overall state
   legio status [--all]        jobs: active only, or every job
+  legio api [--port PORT] [--root DIR]  local read-only HTTP monitoring
   legio inbox                 what is waiting on you, worst first
   legio next <project> [job]  the next step, with the prompt to hand to an agent
   legio route <project>[:job] risk + surfaces -> reviewer set
@@ -24,6 +25,8 @@ recorded in .git/info/exclude, which is local to the machine.
 """
 
 import json
+import math
+import re
 import os
 import shutil
 import subprocess
@@ -31,6 +34,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qsl, urlsplit
 
 VERSION = "0.1.0"
 HERE = Path(__file__).resolve().parent
@@ -441,6 +446,149 @@ def cmd_inbox(projects, opts, args):
         print(c(f"  {' ' * 34} {hint}", DIM))
 
 
+# ---- opt-in local monitoring ----------------------------------------------
+
+API_FIELDS = ("id", "issue", "title", "stage", "round", "round_limit", "pr",
+              "gate", "reviews", "cost_usd", "active", "waiting", "terminal")
+API_READ_TIMEOUT = 5
+API_HELP = """usage: legio api [--port PORT] [--root DIR]
+Foreground, unauthenticated read-only monitoring on 127.0.0.1 only.
+Port defaults to 8765 (1-65535). Stop with Ctrl-C.
+Root precedence: --root, LEGIO_ROOT, configured projects_root.
+GET /api/status or /api/status?project=NAME (exact discovered name).
+Returns {"projects": [{"name": "...", "jobs": [...]}]} including all jobs.
+Job fields: id/title/stage (strings), issue/pr (integer or null),
+round/round_limit (integers), gate (string or null), reviews (string map or null),
+cost_usd (number), active/waiting/terminal (booleans). Values come from job view.
+Errors: {"error": {"code": "...", "message": "..."}}; 400 bad query,
+404 unknown path/project, 405 unsupported method, 502 project read failure.
+Each project read times out after 5 seconds. Other local clients can access this
+listener; it reports recorded state, not process liveness. See README for examples.
+"""
+
+
+class APIReadError(Exception):
+    pass
+
+
+def api_jobs(proj):
+    """Read only the fixed view interface; never expose subprocess diagnostics."""
+    def failed(reason):
+        return APIReadError(f"project {proj.name!r}: {reason}")
+
+    try:
+        res = subprocess.run([str(proj.bin("job")), "view"], cwd=proj.path,
+                             capture_output=True, text=True, timeout=API_READ_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise failed("job view timed out") from None
+    except OSError:
+        raise failed("job command unavailable") from None
+    except UnicodeError:
+        raise failed("invalid job view data") from None
+    if res.returncode:
+        raise failed("job view failed")
+    try:
+        jobs = json.loads(res.stdout)
+        if not isinstance(jobs, list):
+            raise ValueError()
+        out = []
+        for job in jobs:
+            item = {key: job[key] for key in API_FIELDS}
+            valid = all(type(item[k]) is str for k in ("id", "title", "stage"))
+            valid &= all(type(item[k]) is int for k in ("round", "round_limit"))
+            valid &= all(item[k] is None or type(item[k]) is int for k in ("issue", "pr"))
+            valid &= item["gate"] is None or type(item["gate"]) is str
+            reviews = item["reviews"]
+            valid &= reviews is None or (isinstance(reviews, dict) and all(
+                type(k) is str and type(v) is str for k, v in reviews.items()))
+            cost = item["cost_usd"]
+            valid &= type(cost) in (int, float) and math.isfinite(cost)
+            valid &= all(type(item[k]) is bool for k in ("active", "waiting", "terminal"))
+            if not valid:
+                raise ValueError()
+            out.append(item)
+        return out
+    except (ValueError, KeyError, TypeError, OverflowError, RecursionError):
+        raise failed("invalid job view data") from None
+
+
+def api_handler(projects):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            # Request targets and subprocess output need not enter local logs.
+            pass
+
+        def reply(self, status, data):
+            body = json.dumps(data, allow_nan=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def error(self, status, code, message):
+            self.reply(status, {"error": {"code": code, "message": message}})
+
+        def do_GET(self):
+            try:
+                target = urlsplit(self.path)
+            except ValueError:
+                self.error(400, "invalid_query", "invalid request target")
+                return
+            if target.path != "/api/status" or target.scheme or target.netloc:
+                self.error(404, "not_found", "unknown path")
+                return
+            try:
+                if target.fragment or re.search(r"%(?![0-9a-fA-F]{2})", target.query):
+                    raise ValueError()
+                pairs = parse_qsl(target.query, keep_blank_values=True,
+                                  strict_parsing=True, errors="strict")
+                if pairs and (len(pairs) != 1 or pairs[0][0] != "project" or not pairs[0][1]):
+                    raise ValueError()
+            except (ValueError, UnicodeError):
+                self.error(400, "invalid_query", "expected at most one nonempty project selector")
+                return
+            selected = projects
+            if pairs:
+                selected = [p for p in projects if p.name == pairs[0][1]]
+                if not selected:
+                    self.error(404, "not_found", "unknown project")
+                    return
+            try:
+                data = [{"name": p.name, "jobs": api_jobs(p)} for p in selected]
+            except APIReadError as exc:
+                self.error(502, "status_read_failed", str(exc))
+                return
+            self.reply(200, {"projects": data})
+
+        def unsupported(self):
+            self.close_connection = True
+            self.error(405, "method_not_allowed", "only GET is supported")
+
+        do_POST = do_PUT = do_PATCH = do_DELETE = unsupported
+        do_HEAD = do_OPTIONS = do_TRACE = do_CONNECT = unsupported
+
+    return Handler
+
+
+def cmd_api(projects, opts, args):
+    if args or any(value for key, value in opts.items()
+                   if key not in ("root", "port", "stale_minutes")):
+        die("usage: legio api [--port PORT] [--root DIR]")
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", opts["port"]), api_handler(projects))
+    except OSError:
+        die(f"could not bind API to 127.0.0.1:{opts['port']}")
+    with server:
+        print(f"legio API listening on http://127.0.0.1:{server.server_port} (Ctrl-C to stop)",
+              flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+
 # ---- the two calls legio makes into a centuria -----------------------------
 
 
@@ -712,9 +860,9 @@ def cmd_doctor(projects, opts, args):
 def parse(argv):
     opts = {"root": None, "project": None, "offline": False, "all": False,
             "dry_run": False, "force": False, "agent": None, "host": None,
-            "max_steps": None, "yolo": False, "json": False}
+            "max_steps": None, "yolo": False, "json": False, "port": 8765}
     value_flags = {"--root": "root", "--project": "project", "--agent": "agent",
-                   "--host": "host", "--max-steps": "max_steps"}
+                   "--host": "host", "--max-steps": "max_steps", "--port": "port"}
     bool_flags = {"--offline": "offline", "--all": "all", "--dry-run": "dry_run",
                   "--force": "force", "--yolo": "yolo", "--json": "json"}
     rest, i = [], 0
@@ -722,11 +870,13 @@ def parse(argv):
         a = argv[i]
         if a in value_flags and i + 1 < len(argv):
             v = argv[i + 1]
-            if value_flags[a] == "max_steps":
+            if value_flags[a] in ("max_steps", "port"):
                 try:
                     v = int(v)
                 except ValueError:
-                    die(f"--max-steps needs a number, got {v!r}")
+                    die(f"{a} needs a number, got {v!r}")
+                if a == "--port" and not 1 <= v <= 65535:
+                    die("--port must be between 1 and 65535")
             opts[value_flags[a]] = v
             i += 2
         elif a in bool_flags:
@@ -743,7 +893,7 @@ COMMANDS = {
     "ls": None, "status": None, "inbox": None, "next": None,
     "route": None, "gate": None, "advance": None,
     "say": None, "reject": None, "sync": None, "doctor": None,
-    "labels": None, "run": None, "hosts": None,
+    "labels": None, "run": None, "hosts": None, "api": None,
 }
 
 
@@ -759,6 +909,10 @@ def main(argv):
     if cmd not in COMMANDS:
         die(f"unknown command {cmd!r}")
 
+    if cmd == "api" and rest[1:] in (["--help"], ["-h"]):
+        print(API_HELP.strip())
+        return
+
     if cmd in ("add", "new"):
         cmd_add(rest[1:], opts)
         return
@@ -770,7 +924,9 @@ def main(argv):
     projects = discover(opts["root"] or cfg["projects_root"])
     opts["stale_minutes"] = cfg.get("stale_minutes", 240)
 
-    if cmd == "remove":
+    if cmd == "api":
+        cmd_api(projects, opts, rest[1:])
+    elif cmd == "remove":
         cmd_remove(rest[1:], opts)
     elif not projects:
         die(f"no centuriae under {opts['root'] or cfg['projects_root']} "
