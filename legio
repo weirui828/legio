@@ -221,12 +221,34 @@ def tilde(path):
     return "~" + s[len(home):] if s.startswith(home + os.sep) else s
 
 
+def resolve_target(raw):
+    """Turn what the user typed into a project directory.
+
+    A bare name (`seamless`) is looked up under projects_root first, then the
+    current directory - typing `legio add seamless` while sitting in another
+    project should not resolve to a path inside that other project. Anything
+    with a separator, `~` or an absolute prefix is used as a path.
+    """
+    looks_like_path = raw.startswith(("~", "/", ".")) or "/" in raw
+    if looks_like_path:
+        return Path(raw).expanduser().resolve()
+    root = Path(load_config()["projects_root"]).expanduser()
+    candidate = (root / raw)
+    if candidate.is_dir():
+        return candidate.resolve()
+    return Path(raw).resolve()
+
+
 def cmd_add(args, opts):
     if not args:
-        die("usage: legio add <path>")
-    target = Path(args[0]).expanduser().resolve()
+        die("usage: legio add <path | name>")
+    target = resolve_target(args[0])
     if not target.is_dir():
-        die(f"{target} is not a directory")
+        root = Path(load_config()["projects_root"]).expanduser()
+        die(f"{target} is not a directory\n"
+            f"      a bare name is looked up under {root} first, then the current "
+            f"directory.\n"
+            f"      pass a path instead: legio add {root / args[0]}")
     dest = target / ".centuria"
     if dest.exists() and not opts["force"]:
         die(f"{dest} already exists (use --force to overwrite)")
@@ -320,8 +342,8 @@ def cmd_labels(projects, opts, args):
 
 def cmd_remove(args, opts):
     if not args:
-        die("usage: legio remove <path>")
-    target = Path(args[0]).expanduser().resolve()
+        die("usage: legio remove <path | name>")
+    target = resolve_target(args[0])
     dest = target / ".centuria"
     if not dest.exists():
         die(f"{dest} does not exist")
