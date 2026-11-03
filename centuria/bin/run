@@ -32,6 +32,7 @@ It stops when the job needs a human, is finished, or the step budget runs out.
 
 import json
 import os
+import uuid
 import subprocess
 import sys
 import threading
@@ -138,6 +139,34 @@ def expand(tokens, subs):
     return out
 
 
+def session_flags(prof, order):
+    """Which flags make this call create or continue the job's session for this role.
+
+    A session id is derived from (job, role), so it is stable across rounds without
+    any state to keep. A marker file records that the session has been created once;
+    before that we must create it, after that we resume it.
+    """
+    sess = prof.get("session") or {}
+    if not sess.get("resume"):
+        return [], None, None
+    sid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{order['id']}/{order['role']}"))
+    marker = CENTURIA / "jobs" / order["id"] / f".session-{order['role']}"
+    subs = {"session_id": sid}
+    if marker.exists():
+        return expand(sess.get("resume") or [], subs), sid, "resume"
+    return expand(sess.get("new") or [], subs), sid, "new"
+
+
+def mark_session(prof, order):
+    if (prof.get("session") or {}).get("resume"):
+        marker = CENTURIA / "jobs" / order["id"] / f".session-{order['role']}"
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text("created\n")
+        except OSError:
+            pass
+
+
 def build(prof, order, yolo):
     rf = Path(order["role_file"])
     if not rf.exists():
@@ -150,6 +179,8 @@ def build(prof, order, yolo):
             "centuria": str(CENTURIA), "host_dir": str(Path(prof["_path"]).parent)}
 
     cmd = expand(prof["command"], subs)
+    session, sid, session_mode = session_flags(prof, order)
+    cmd += session
     if yolo:
         cmd += expand(prof.get("yolo") or [], subs)
     if (prof.get("cwd") or {}).get("mode") == "flag":
@@ -168,7 +199,7 @@ def build(prof, order, yolo):
         # A prompt passed as argv that begins with a dash is parsed as an
         # option by most CLI argument parsers (dsh answered `unknown option`).
         body = order["header"] + "\n\n" + role_text + "\n\n---\n\n" + order["task"]
-    return cmd, body, cwd, model
+    return cmd, body, cwd, model, session_mode
 
 
 def build_env(prof):
@@ -384,7 +415,7 @@ def main(argv):
             for item in order["roles"]:
                 one = dict(order, role=item["role"], tier=item["tier"],
                            role_file=item["role_file"], task=item["task"])
-                cmd, body, cwd, model = build(prof, one, yolo)
+                cmd, body, cwd, model, smode = build(prof, one, yolo)
                 print(c(f"{tag}: {item['role']}", BOLD))
                 print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}", DIM))
                 if dry:
@@ -415,19 +446,24 @@ def main(argv):
                     print(c(f"  full output: {log}", DIM))
                 print(c("  the job was not settled; fix it and run again", YELLOW))
                 return
+            for role in [r[0] for r in running]:
+                mark_session(prof, dict(order, role=role))
             print(c(f"  {len(running)} review(s) finished", DIM))
             job_run("done", order["id"])
             continue
 
-        cmd, body, cwd, model = build(prof, order, yolo)
+        cmd, body, cwd, model, smode = build(prof, order, yolo)
         print(c(f"{tag}: {order['role']}", BOLD))
-        print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}", DIM))
+        print(c(f"  host={prof.get('host', '?')}  model={model or '-'}  cwd={cwd}"
+                + (f"  session={smode}" if smode else ""), DIM))
         if dry:
             print(c("  would run: " + " ".join(cmd), DIM))
             print()
             print(body)
             return
         res = invoke(prof, cmd, body, cwd)
+        if res.returncode == 0:
+            mark_session(prof, order)
         log = (CENTURIA / "jobs" / order["id"]
                / f"agent-{order['round']}-{order['role']}.log")
         try:

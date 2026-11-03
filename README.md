@@ -340,6 +340,7 @@ A profile is a dozen fields:
 | `model.flag` | how to name a model |
 | `model_tiers` | **tier → concrete model** (host-specific) |
 | `env` | variables to inject: `{"value": "..."}` or `{"shell": "..."}` |
+| `session` | `new` / `resume` flag templates, so a role can continue its own session |
 | `host_paths` | paths this host creates in a project; `legio add` excludes them |
 | `timeout_seconds` | per invocation |
 
@@ -347,6 +348,20 @@ A profile is a dozen fields:
 parsed as an option (dsh answered `unknown option`, echoing the whole prompt back).
 `bin/run` therefore builds the prompt as: job header, then role file, then this round's
 task.
+
+**Session reuse.** A role that runs more than once in a job (Fabri across rounds, a
+reviewer across rounds) can keep its conversation instead of rediscovering the repo every
+time. The runner derives a stable uuid from `(job, role)`, passes the profile's
+`session.new` flags the first time and `session.resume` flags afterwards, and records
+that with a `.session-<role>` marker in the job folder:
+
+```json
+"session": {"new":    ["--session-id", "{session_id}"],
+            "resume": ["--resume",    "{session_id}"]}
+```
+
+A host without a `session` block simply starts fresh every time (dsh headless has no
+resume flag). Delete `.centuria/jobs/<id>/.session-*` to force a new session.
 
 **`--yolo` is off by default.** A non-interactive agent has to be pre-authorized to use
 its tools, or it stops to ask and the pipeline hangs; but those flags disable every
