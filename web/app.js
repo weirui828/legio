@@ -330,6 +330,7 @@ function note(job, working) {
   }).join('');
   return `<button class="note ${working ? 'working' : ''}" type="button" data-job="${esc(job.id)}"
       title="${working ? 'a role is working on this job right now' : ''}">
+    <img class="note-seal" src="${asset('seal')}" alt="" aria-hidden="true">
     <span class="note-title">${esc(job.title)}</span>
     <span class="note-meta">${esc(job.id.split('-')[0])} · r${esc(job.round ?? 0)}/${
   esc(job.round_limit ?? 3)}${job.gate ? ` · gate ${job.gate === 'PASS' ? '✓' : '✗'}` : ''}</span>

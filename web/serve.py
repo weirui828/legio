@@ -219,6 +219,8 @@ def demo_camp() -> dict:
                              "build", active=True),
                     demo_job("005-status-api", 5, "Serve the camp status as JSON",
                              "spec", active=True),
+                    demo_job("006-sketch-the-map", 7, "Sketch the camp map",
+                             "build", active=True),
                     demo_job("003-add-ui-to-legio", 4, "Add UI to legio",
                              "needs-human", waiting=True,
                              reviews={"probator": "PASS", "mensor": "CHANGES"},
