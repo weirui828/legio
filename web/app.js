@@ -331,8 +331,8 @@ function note(job, working) {
   return `<button class="note ${working ? 'working' : ''}" type="button" data-job="${esc(job.id)}"
       title="${working ? 'a role is working on this job right now' : ''}">
     <span class="note-title">${esc(job.title)}</span>
-    <span class="note-meta">r${esc(job.round ?? 0)}/${esc(job.round_limit ?? 3)}${
-  job.gate ? ` · gate ${job.gate === 'PASS' ? '✓' : '✗'}` : ''}</span>
+    <span class="note-meta">${esc(job.id.split('-')[0])} · r${esc(job.round ?? 0)}/${
+  esc(job.round_limit ?? 3)}${job.gate ? ` · gate ${job.gate === 'PASS' ? '✓' : '✗'}` : ''}</span>
     ${marks ? `<span class="note-marks">${marks}</span>` : ''}
     ${job.cost_usd ? `<span class="note-cost">${Number(job.cost_usd).toFixed(2)}</span>` : ''}
   </button>`;
