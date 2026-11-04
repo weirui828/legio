@@ -84,6 +84,11 @@
     "w": 667,
     "h": 680
   },
+  "head-tesserarius": {
+    "file": "head-tesserarius.webp",
+    "w": 96,
+    "h": 96
+  },
   "role-signifer": {
     "file": "role-signifer.webp",
     "w": 294,
@@ -93,6 +98,11 @@
     "file": "role-signifer-working.webp",
     "w": 678,
     "h": 680
+  },
+  "head-signifer": {
+    "file": "head-signifer.webp",
+    "w": 96,
+    "h": 96
   },
   "role-fabri": {
     "file": "role-fabri.webp",
@@ -104,6 +114,11 @@
     "w": 688,
     "h": 680
   },
+  "head-fabri": {
+    "file": "head-fabri.webp",
+    "w": 96,
+    "h": 96
+  },
   "role-probator": {
     "file": "role-probator.webp",
     "w": 303,
@@ -113,6 +128,11 @@
     "file": "role-probator-working.webp",
     "w": 665,
     "h": 680
+  },
+  "head-probator": {
+    "file": "head-probator.webp",
+    "w": 96,
+    "h": 96
   },
   "role-medicus": {
     "file": "role-medicus.webp",
@@ -124,6 +144,11 @@
     "w": 679,
     "h": 680
   },
+  "head-medicus": {
+    "file": "head-medicus.webp",
+    "w": 96,
+    "h": 96
+  },
   "role-mensor": {
     "file": "role-mensor.webp",
     "w": 307,
@@ -133,6 +158,11 @@
     "file": "role-mensor-working.webp",
     "w": 652,
     "h": 680
+  },
+  "head-mensor": {
+    "file": "head-mensor.webp",
+    "w": 96,
+    "h": 96
   },
   "role-librator": {
     "file": "role-librator.webp",
@@ -144,6 +174,11 @@
     "w": 668,
     "h": 680
   },
+  "head-librator": {
+    "file": "head-librator.webp",
+    "w": 96,
+    "h": 96
+  },
   "role-primus-pilus": {
     "file": "role-primus-pilus.webp",
     "w": 294,
@@ -153,6 +188,11 @@
     "file": "role-primus-pilus-working.webp",
     "w": 668,
     "h": 680
+  },
+  "head-primus-pilus": {
+    "file": "head-primus-pilus.webp",
+    "w": 96,
+    "h": 96
   },
   "soldier-1": {
     "file": "soldier-1.webp",

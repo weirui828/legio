@@ -37,7 +37,8 @@ ROLE_ORDER = (
 
 JOB_FIELDS = (
     "id", "issue", "title", "stage", "round", "round_limit", "pr", "gate",
-    "reviews", "cost_usd", "active", "waiting", "terminal", "human_reason",
+    "reviews", "roster", "cost_usd", "active", "waiting", "terminal",
+    "human_reason",
 )
 
 TYPES = {
@@ -198,12 +199,12 @@ def demo_cast() -> list[dict]:
 
 def demo_job(id, issue, title, stage, round=1, pr=None, gate=None,
              reviews=None, active=False, waiting=False, terminal=False,
-             human_reason=None, cost=0.0):
+             human_reason=None, cost=0.0, roster=None):
     return {"id": id, "issue": issue, "title": title, "stage": stage,
             "round": round, "round_limit": 3, "pr": pr, "gate": gate,
             "reviews": reviews or {}, "cost_usd": cost, "active": active,
             "waiting": waiting, "terminal": terminal,
-            "human_reason": human_reason}
+            "human_reason": human_reason, "roster": roster}
 
 
 def demo_camp() -> dict:
@@ -216,13 +217,18 @@ def demo_camp() -> dict:
                 "name": "legio", "path": "", "ok": True, "error": None,
                 "jobs": [
                     demo_job("004-camp-ui", 6, "Camp Legio: a cozy camp UI",
-                             "build", active=True),
+                             "build", active=True,
+                             roster={"reviewers": {"probator": "medium",
+                                                   "medicus": "strong"}}),
                     demo_job("005-status-api", 5, "Serve the camp status as JSON",
                              "spec", active=True),
                     demo_job("006-sketch-the-map", 7, "Sketch the camp map",
                              "build", active=True),
                     demo_job("007-name-the-tents", 8, "Name every tent",
-                             "review", active=True),
+                             "review", active=True,
+                             reviews={"probator": "PASS", "mensor": "CHANGES"},
+                             roster={"reviewers": {"probator": "medium",
+                                                   "mensor": "medium"}}),
                     demo_job("008-count-the-camp", 9, "Count the whole camp",
                              "gate", active=True),
                     demo_job("003-add-ui-to-legio", 4, "Add UI to legio",

@@ -23,6 +23,12 @@ const ROLE_VERB = {
   'primus-pilus': 'judging the work',
 };
 
+const STAGE_ROLE = {
+  intake: 'tesserarius', spec: 'signifer', build: 'fabri', gate: null,
+  review: null, approve: 'primus-pilus', 'needs-info': 'tesserarius',
+  'needs-human': null, merged: 'primus-pilus', rejected: null,
+};
+
 const ROLE_FALLBACK = {
   tesserarius: 'Doorkeeper', signifer: 'Standard-bearer', fabri: 'Engineer',
   probator: 'Inspector', medicus: 'Surgeon', mensor: 'Surveyor',
@@ -275,6 +281,7 @@ function renderTent(project) {
   const primary = lives[0] || null;
   const coWorkers = lives.slice(1);
   const workingIds = new Set(lives.map((live) => live.job));
+  const liveByJob = new Map(lives.map((live) => [live.job, live.roles]));
   const workingJob = primary && primary.job
     ? (project.jobs || []).find((job) => job.id === primary.job) : null;
   const staleLive = (project.lives || []).find((live) => live.stale);
@@ -299,9 +306,9 @@ function renderTent(project) {
           <span>AD FACIENDUM</span><span>IN CURSU</span><span>FACTUM</span>
         </div>
         <div class="board-lanes">
-          ${lane('todo', lanes.todo, workingIds)}
-          ${lane('doing', lanes.doing, workingIds)}
-          ${lane('done', lanes.done, workingIds)}
+          ${lane('todo', lanes.todo, workingIds, project, liveByJob)}
+          ${lane('doing', lanes.doing, workingIds, project, liveByJob)}
+          ${lane('done', lanes.done, workingIds, project, liveByJob)}
         </div>
       </section>
       <section class="role-stage" aria-label="the working role">
@@ -362,27 +369,45 @@ function showLane(project, kind) {
     </ul>`, true);
 }
 
-function lane(kind, jobs, workingIds) {
+function lane(kind, jobs, workingIds, project, liveByJob) {
   return `<div class="lane lane-${kind}" data-lane="${kind}">
     <div class="notes">${jobs.length
-    ? jobs.map((job) => note(job, workingIds.has(job.id))).join('')
+    ? jobs.map((job) => note(job, workingIds.has(job.id), project, liveByJob)).join('')
     : '<span class="lane-empty">nothing here</span>'}</div>
   </div>`;
 }
 
-function note(job, working) {
-  const marks = Object.entries(job.reviews || {}).map(([role, verdict]) => {
-    const short = role.slice(0, 3).toUpperCase();
-    return `<i class="mark ${verdict === 'PASS' ? 'pass' : 'changes'}"
-      title="${esc(role)}: ${esc(verdict)}">${short}</i>`;
+function noteFaces(job, project, liveByJob) {
+  const roles = [];
+  const current = STAGE_ROLE[job.stage];
+  if (current) roles.push(current);
+  for (const role of Object.keys(job.roster?.reviewers || {})) roles.push(role);
+  for (const role of Object.keys(job.reviews || {})) roles.push(role);
+  const ordered = ROLE_FILES.filter((role) => roles.includes(role));
+  const onDuty = new Set(liveByJob.get(job.id) || []);
+  const verdicts = job.reviews || {};
+  return ordered.map((role) => {
+    const title = roleTitle(role, project.cast);
+    const entry = (project.cast || []).find((item) => item.role === role);
+    const duty = entry?.duty ? ` — ${entry.duty}` : '';
+    const verdict = verdicts[role];
+    const cls = ['face-wrap', onDuty.has(role) ? 'on-duty' : '',
+      verdict === 'PASS' ? 'pass' : verdict === 'CHANGES' ? 'changes' : '']
+      .filter(Boolean).join(' ');
+    return `<span class="${cls}" title="${esc(title + duty)}">`
+      + `<img class="role-face" src="${asset(`head-${role}`)}" alt=""></span>`;
   }).join('');
+}
+
+function note(job, working, project, liveByJob) {
+  const faces = noteFaces(job, project, liveByJob);
   return `<button class="note ${working ? 'working' : ''}" type="button" data-job="${esc(job.id)}"
       title="${working ? 'a role is working on this job right now' : ''}">
     <img class="note-seal" src="${asset('seal')}" alt="" aria-hidden="true">
     <span class="note-title">${esc(job.title)}</span>
     <span class="note-meta">${esc(job.id.split('-')[0])} · r${esc(job.round ?? 0)}/${
   esc(job.round_limit ?? 3)}${job.gate ? ` · gate ${job.gate === 'PASS' ? '✓' : '✗'}` : ''}</span>
-    ${marks ? `<span class="note-marks">${marks}</span>` : ''}
+    ${faces ? `<span class="note-roles">${faces}</span>` : ''}
     ${job.cost_usd ? `<span class="note-cost">${Number(job.cost_usd).toFixed(2)}</span>` : ''}
   </button>`;
 }

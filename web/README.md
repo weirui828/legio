@@ -27,7 +27,11 @@ cleanly". Bottom left: notifications. Bottom right: HELP.
 
 **A tent.** Cream canvas, a wooden floor and the **TABULA OPERUM**:
 `AD FACIENDUM` (waiting on a human), `IN CURSU` (being worked), `FACTUM`
-(finished — merged or rejected). One pinned note per job. The right side is the
+(finished — merged or rejected). One pinned note per job, and the note carries
+the **cast faces** of that job: the role of the current stage, the reviewers
+from its roster and whoever reviewed it — a green or red ring is their verdict,
+a brass ring means that role is working on it right now (hover a face for its
+title and duty). The right side is the
 desk: if a role is working right now, that role's chibi sits there with the job
 name in a bubble, warm glow and floating hearts. If nobody is working, the desk
 is empty and says so. The strip at the bottom is the cast; the on-duty role is
@@ -50,9 +54,9 @@ from the same CSS parchment palette — no extra art is needed for them.
 legio's `config.json`, or `--root`), then for each project:
 
 - runs `.centuria/bin/centuria view` (5s timeout) and keep only
-  `id, issue, title, stage, round, round_limit, pr, gate, reviews, cost_usd,
-  active, waiting, terminal, human_reason` — no worktree paths, prompts, logs,
-  config or secrets reach the browser;
+  `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster,
+  cost_usd, active, waiting, terminal, human_reason` — no worktree paths,
+  prompts, logs, config or secrets reach the browser;
 - reads every `.centuria/jobs/*/live.json` for "who is at the desk" (concurrency
   can be more than one, so several jobs can be working at once);
 - parses `.centuria/roles/*.md` (frontmatter + first blockquote) for the cast.

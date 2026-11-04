@@ -123,6 +123,22 @@ def cut_white(im: Image.Image, tol: int = 14, band_px: int = 5,
     return result
 
 
+def head_crop(im: Image.Image) -> Image.Image:
+    """A square avatar from a working sprite: head, shoulders, a bit of prop."""
+    im = im.convert("RGBA")
+    width, height = im.size
+    crop = im.crop((int(width * 0.30), int(height * 0.12),
+                    int(width * 0.78), int(height * 0.48)))
+    box = crop.getchannel("A").getbbox()
+    if box:
+        crop = crop.crop(box)
+    side = max(crop.width, crop.height)
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.alpha_composite(crop, ((side - crop.width) // 2,
+                                  (side - crop.height) // 2))
+    return canvas.resize((96, 96), Image.LANCZOS)
+
+
 def save(im: Image.Image, name: str, quality: int = 86) -> dict:
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{name}.webp"
@@ -183,6 +199,10 @@ def main() -> None:
             name = f"role-{role}{suffix}"
             im = Image.open(SRC / f"{name}.png").convert("RGBA")
             manifest[name] = process_sprite(name, im)
+            if suffix == "-working":
+                # a 48px avatar for the notes on the board
+                manifest[f"head-{role}"] = save(head_crop(im),
+                                                f"head-{role}", quality=88)
 
     # soldiers sheet -> four cutouts
     import numpy as np

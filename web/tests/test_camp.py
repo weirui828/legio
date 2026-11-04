@@ -123,10 +123,13 @@ class CastAndLive(Fixture):
 
 class Payload(Fixture):
     def test_jobs_are_allowlisted(self):
-        jobs = [a_job(secret="hunter2", worktree="/private/tmp", prompts=["hi"])]
+        roster = {"reviewers": {"probator": "medium"}}
+        jobs = [a_job(secret="hunter2", worktree="/private/tmp", prompts=["hi"],
+                      roster=roster)]
         payload = self.payload("alpha", jobs=jobs)
         self.assertTrue(payload["ok"])
         self.assertEqual(set(payload["jobs"][0]), set(SERVE.JOB_FIELDS))
+        self.assertEqual(payload["jobs"][0]["roster"], roster)
         self.assertNotIn("hunter2", json.dumps(payload))
         self.assertNotIn("worktree", payload["jobs"][0])
 

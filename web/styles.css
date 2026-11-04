@@ -580,7 +580,7 @@ a { color: inherit; }
   min-height: 88px;
   border: 0;
   margin: 0;
-  padding: 18px 12px 9px;
+  padding: 18px 12px 10px;
   background: none;
   color: var(--ink);
   text-align: left;
@@ -654,27 +654,48 @@ a { color: inherit; }
   color: var(--ink-2);
 }
 
-.note-marks {
+.note-roles {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 3px;
+  align-items: center;
+  margin-top: 6px;
+  padding-left: 2px;
 }
 
-.mark {
-  font-style: normal;
-  font-size: clamp(6.5px, 0.68vw, 9.5px);
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 0 3px;
-  border-radius: 3px;
-  border: 1px solid;
+.face-wrap {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  margin-right: -6px;
+  border-radius: 50%;
 }
 
-.mark.pass { color: #4C6528; border-color: #8FB85A; background: rgba(185, 187, 103, 0.35); }
-.mark.changes { color: #8C2E28; border-color: #C15850; background: rgba(242, 184, 181, 0.45); }
+.face-wrap:last-child { margin-right: 0; }
 
-/* a note with a role at work right now */
+.role-face {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: block;
+  object-fit: cover;
+  background: #F3DDBB;
+  border: 1.5px solid #FBE7C7;
+  filter: drop-shadow(0 1px 1px rgba(60, 40, 20, 0.3));
+}
+
+.face-wrap.pass .role-face { box-shadow: 0 0 0 1.5px #8FB85A; }
+.face-wrap.changes .role-face { box-shadow: 0 0 0 1.5px #C15850; }
+
+.face-wrap.on-duty .role-face {
+  box-shadow: 0 0 0 2px var(--brass), 0 0 10px rgba(232, 184, 75, 0.9);
+  animation: facepulse 1.8s ease-in-out infinite;
+}
+
+@keyframes facepulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--brass), 0 0 8px rgba(232, 184, 75, 0.6); }
+  50% { box-shadow: 0 0 0 2px var(--brass), 0 0 14px rgba(232, 184, 75, 0.95); }
+}
+
+/* a note whose job is running right now */
 .note.working::after {
   content: "";
   position: absolute;
@@ -1300,6 +1321,8 @@ a { color: inherit; }
   .board-labels { font-size: 7px; letter-spacing: 0.04em; gap: 3.85%; }
   .note-title { font-size: 8.5px; }
   .note-meta { font-size: 6.5px; }
+  .face-wrap, .role-face { width: 17px; height: 17px; }
+  .face-wrap { margin-right: -4px; }
 
   .role-stage { min-height: 42vh; margin-top: 12px; }
   .worker { height: 40vh; }
