@@ -485,16 +485,16 @@ a { color: inherit; }
 
 .board-labels {
   position: absolute;
-  top: 21.6%;
-  left: 9%;
-  right: 13%;
-  display: flex;
-  gap: 3.85%;
+  top: 21.4%;
+  left: 12.45%;
+  right: 11.6%;
+  display: grid;
+  grid-template-columns: 30.4% 30.6% 30.6%;
+  justify-content: space-between;
   text-align: center;
 }
 
 .board-labels span {
-  flex: 1;
   padding: 1px 4px;
   border: 1.5px solid rgba(93, 58, 46, 0.32);
   border-radius: 5px;
@@ -511,18 +511,20 @@ a { color: inherit; }
 
 .board-lanes {
   position: absolute;
-  top: 26.5%;
-  bottom: 21%;
-  left: 9%;
-  right: 13%;
-  display: flex;
-  gap: 3.85%;
+  top: 25.2%;
+  bottom: 21.4%;
+  left: 12.45%;
+  right: 11.6%;
+  display: grid;
+  grid-template-columns: 30.4% 30.6% 30.6%;
+  grid-template-rows: minmax(0, 1fr);
+  justify-content: space-between;
 }
 
 .lane {
   position: relative;
-  flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   padding: 1px 2px 0;
 }
@@ -555,7 +557,9 @@ a { color: inherit; }
 .lane-list a { align-items: center; }
 
 .notes {
+  position: relative;
   width: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 6px;

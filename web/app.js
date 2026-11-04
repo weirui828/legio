@@ -326,16 +326,27 @@ function annotateLaneOverflow(project) {
   $$('.lane').forEach((laneEl) => {
     const notes = laneEl.querySelector('.notes');
     if (!notes) return;
-    const hidden = Array.from(notes.children).filter((child) =>
-      child.offsetTop + child.offsetHeight > notes.clientHeight + 4).length;
-    if (!hidden || notes.scrollHeight <= notes.clientHeight + 4) return;
-    laneEl.classList.add('overflowing');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'lane-more';
-    button.textContent = `+${hidden} more`;
-    button.addEventListener('click', () => showLane(project, laneEl.dataset.lane));
-    laneEl.appendChild(button);
+    let pill = null;
+    const update = () => {
+      const bottom = notes.scrollTop + notes.clientHeight;
+      const hidden = Array.from(notes.children).filter((child) =>
+        child.offsetTop + child.offsetHeight > bottom + 4).length;
+      laneEl.classList.toggle('overflowing', hidden > 0);
+      if (!hidden) {
+        if (pill) { pill.remove(); pill = null; }
+        return;
+      }
+      if (!pill) {
+        pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'lane-more';
+        pill.addEventListener('click', () => showLane(project, laneEl.dataset.lane));
+        laneEl.appendChild(pill);
+      }
+      pill.textContent = `+${hidden} more`;
+    };
+    notes.addEventListener('scroll', update, { passive: true });
+    update();
   });
 }
 
