@@ -1,491 +1,312 @@
-# legio
+<p align="center">
+  <img src="web/docs/camp.jpg" alt="Camp Legio: an illustrated Roman camp with one tent per project" width="880">
+</p>
 
-A software factory. Label a GitHub issue, and a fixed cast of roles takes it all the
-way: doorkeeper → spec → build → gate → review → arbiter → you merge the PR.
+<p align="center"><sub><i>Demo camp — the screenshots use fake projects.</i></sub></p>
 
-- **legio** is the command and the system itself.
-- **centuria** is the set of files stationed inside one project (`<project>/.centuria/`),
-  and also the unit that runs that project.
+<h1 align="center">legio</h1>
 
-One centuria per project. Many projects under one legio.
+<p align="center">
+  <b>Label a GitHub issue. A Roman legion picks it up.</b><br>
+  Intake → spec → code → gate → review → ready PR, with a human on the merge button.
+</p>
 
-This repo carries a second tool: **swarm**, the review-only set — the same reviewer
-cast with the whole pipeline removed (diff in, review files out, nothing else).
-See the swarm section below and `swarm/README.md`.
-
----
-
-## The split: legio does not know what the pipeline looks like
-
-```
-legio (one copy)                  centuria (one copy per project)
-─────────────────                 ──────────────────────────────
-find the projects                 the state machine, job.json
-turn new issues into jobs         which stages exist
-spawn nothing itself              which role belongs to each stage
-read reports back                 what the artifacts are called
-own the host registry             what counts as passing
-                                  the prompt text (role + this round)
-```
-
-legio talks to a centuria through two commands:
-
-```
-job next <id> --json    a work order: {kind: agent|gate|human|done|noop,
-                                       role, tier, cwd, role_file, header, task}
-job done <id>           centuria reads the artifacts and decides where the job goes
-```
-
-So:
-
-- **There is no stage name, role name, or `STATUS: READY` anywhere in `legio`.**
-  (`grep -nE 'tesserarius|build\.md|VERDICT:' legio` comes back empty.)
-- Upgrading the pipeline means re-copying `.centuria/`; legio does not change.
-- Adding a host means changing `hosts/*.json`; centuria does not change.
-- **legio can be deleted.** A centuria carries `bin/run` and can drive itself.
-
-One line: **centuria owns the project, legio owns getting work to a host.**
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#the-cast">The cast</a> ·
+  <a href="#how-a-job-flows">How a job flows</a> ·
+  <a href="#camp-legio--the-dashboard">Dashboard</a> ·
+  <a href="#swarm--reviews-without-the-factory">swarm</a> ·
+  <a href="#go-deeper">Docs</a>
+</p>
 
 ---
 
-## Three words, do not mix them
+## What is this?
 
-| word | what it is | where it lives | how many |
-|---|---|---|---|
-| **role** | the manual for one job | `<project>/.centuria/roles/*.md` | 8, fixed |
-| **roster** | which roles this job fields, and at what tier | `job.json`'s `roster` field | one per job |
-| **host** | how to hand a work order to an agent CLI | `legio/hosts/*.json` | one per CLI |
+**legio is a local software factory.** You label a GitHub issue; a fixed pipeline takes it
+from there: a doorkeeper decides whether the issue is worth building, a spec-writer turns it
+into something executable, a builder writes the code and opens a pull request, and a small
+cast of reviewers checks the diff. When everything is green it hands the PR back to you —
+**it does not merge for you by default.**
 
-A centuria holds **roles**; it writes a **roster** for each job; legio uses a **host** to
-run it.
+It is not a service, a framework, or a SaaS. It is a few standard-library Python scripts
+plus a set of role prompts, running on your machine against the agent CLI you already
+use.
 
-## What remembers what
+Four pieces ship in this repository:
 
-| layer | how many | lifetime | remembers |
-|---|---|---|---|
-| legio | 1 | permanent | nothing. It only drives |
-| **centuria** | one per project | as long as the project | **everything**: `jobs/` holds every job.json and artifact |
-| job | N per centuria | until merged / rejected | its own job.json and `round-N/` |
-| **agent instance** | many per job | one call, writes one file, exits | **nothing**. It gets a work order |
+| piece | what it does | lives in |
+|---|---|---|
+| **legio** | the command: finds projects, turns labelled issues into jobs, owns the host registry | `legio`, `hosts/` |
+| **centuria** | the pipeline: state machine, roles, artifacts, one git worktree per job | `centuria/` → `<project>/.centuria/` |
+| **swarm** | review-only: hand it a diff, get reviewer verdicts back | `swarm/` |
+| **web** | a read-only camp dashboard for watching it all | `web/` |
 
-An agent is a representative the centuria sends out, not a stateful assistant: **work
-order in, one file out, exit**. That is why a dead session can resume, why swapping the
-host changes nothing, and why a crashed agent cannot corrupt state — the memory lives
-only in the centuria's files.
+Two ideas make it feel different from a CI pipeline:
 
----
+- **The pipeline is a template, not a framework.** legio has no idea which stages exist.
+  It only knows how to ask a project for a work order and a view, and how to forward
+  commands to it. The stages, roles and artifacts live in `<project>/.centuria/`.
+  Upgrading the pipeline means copying a new `.centuria/` in — legio itself does not
+  change. Delete legio and a stationed project still carries `bin/centuria`, so it can
+  drive itself given a host spec (`--host-spec`).
+- **An agent is a courier, not an assistant.** Work order in, one file out, exit. Nothing
+  about a job lives in a conversation: it lives in `job.json` and the markdown artifacts.
+  That is why a crashed session resumes cleanly, why you can swap Claude Code for Codex
+  mid-project, and why a chatty model cannot corrupt the state.
 
-## The eight roles
+## How a job flows
 
-The names are Roman army posts. **You cannot guess the function from the name**, so each
-role file opens with it. Same table here:
+```mermaid
+flowchart TD
+    issue(["GitHub issue<br/>labelled centuria"])
+    tesserarius["Tesserarius<br/>doorkeeper"]
+    needsinfo["asks the author<br/>and parks"]
+    rejected(["rejected"])
+    signifer["Signifer<br/>writes the spec"]
+    fabri["Fabri<br/>codes, tests, pushes a draft PR"]
+    gate{"gate: your checks.sh"}
+    reviewers["reviewers start together<br/>Probator + routed specialists"]
+    primus["Primus Pilus<br/>arbiter"]
+    needs["needs-human<br/>waiting for you"]
+    merged(["merged"])
 
-| Roman name | Equivalent | Function, in one line | Output | When it runs |
-|---|---|---|---|---|
-| **Tesserarius** | intake | **doorkeeper**: is this issue worth building, how much, how risky | `intake.md` | once per issue |
-| **Signifer** | spec-writer | **standard-bearer**: turn a request into a spec that can be executed and checked | `spec.md` | after ACCEPT |
-| **Fabri** | builder | **engineer**: write code, run checks, commit, push, open the PR | `build.md` + code | once per round |
-| **Probator** | reviewer-code | **inspector**: correct, in scope, actually tested | `review-probator.md` | every round |
-| **Medicus** | reviewer-security | **surgeon**: injection, privilege, leaks, dependencies | `review-medicus.md` | `security` surface only |
-| **Mensor** | reviewer-ux | **surveyor**: can a user understand it, get through it, recover from errors | `review-mensor.md` | `ui` surface only |
-| **Librator** | reviewer-ui | **level-keeper**: alignment, spacing, hierarchy, theme | `review-librator.md` | `ui` surface only |
-| **Primus Pilus** | approver | **arbiter**: can this go in, or does a human decide | `decision.md` | after every review passes |
+    issue --> tesserarius
+    tesserarius -->|"NEEDS-INFO"| needsinfo
+    tesserarius -->|"REJECT"| rejected
+    tesserarius -->|"ACCEPT + risk + surfaces"| signifer
+    signifer --> fabri
+    fabri --> gate
+    fabri -->|"STATUS: BLOCKED"| needs
+    gate -->|"FAIL, rounds left"| fabri
+    gate -->|"FAIL, last round"| needs
+    gate -->|"PASS"| reviewers
+    reviewers -->|"CHANGES, rounds left"| fabri
+    reviewers -->|"CHANGES, last round"| needs
+    reviewers -->|"all PASS"| primus
+    primus -->|"APPROVE: ready for you"| needs
+    primus -->|"ESCALATE: one question"| needs
+    needs -->|"you merge"| merged
+    needs -->|"feedback, next round"| fabri
+    needs -->|"you reject it"| rejected
+    needsinfo -->|"author replies"| tesserarius
+```
 
-The eight together are a fixed cast. **Instances are not fixed**: a job that burns all
-its rounds spawns eighteen or more.
+What the shape enforces:
 
----
+- **The doorkeeper cuts before code is written.** An issue can be accepted with reduced
+  scope, parked until it has the information it needs, or rejected.
+- **Nothing reaches a reviewer on a red build.** The gate runs your own `checks.sh` inside
+  the job's worktree, and fails if the branch edits a protected file.
+- **Reviewers are independent, so they run at the same time.** Four reviewers cost one
+  reviewer's wall-clock time, not four.
+- **The arbiter does not decide alone.** It either says the PR is ready for you, or
+  escalates the single question a human has to answer.
 
-## Station a centuria in a project
+*(The diagram shows the default `human` policy. A parked issue can also be rejected outright,
+and with `merge_policy: "legio"` an approved PR can go through `merging` via `centuria merge`.)*
+
+## Quick start
+
+**You'll need:** Python 3.10+ (standard library only), Git, an authenticated GitHub CLI
+(`gh auth login`), and at least one agent CLI on your `PATH` — Claude Code, Codex, DSH,
+or Gemini. The repo also ships `echo` and `fake` hosts so the pipeline can be exercised
+without a model.
 
 ```bash
+# 0. get it and put the command on your PATH
+git clone https://github.com/weirui828/legio.git ~/dev/legio
+ln -s ~/dev/legio/legio /usr/local/bin/legio   # or: export PATH="$HOME/dev/legio:$PATH"
+
+# 1. tell legio where your projects live (default: ~/dev)
+$EDITOR ~/dev/legio/config.json
+
+# 2. station a centuria in a git repo with a GitHub remote
 legio add ~/dev/webapp --host claude-code
-```
 
-This:
+# 3. make it honest: real checks, and this project's policy
+$EDITOR ~/dev/webapp/.centuria/checks.sh       # exits 1 until you fill it in, on purpose
+$EDITOR ~/dev/webapp/.centuria/config.json     # base_branch, protected_paths, merge_policy
 
-1. copies `legio/centuria/` to `~/dev/webapp/.centuria/`
-2. points `default_host_spec` at `legio/hosts/<host>.json`
-3. writes `.centuria/`, `.worktrees/` — **and whatever paths the host itself creates in
-   a project** (for claude that is `.claude/settings.local.json`, for dsh `.dsh/`) — into
-   `~/dev/webapp/.git/info/exclude`
-
-**Note step 3: `.git/info/exclude`, not `.gitignore`.** These files never enter git
-history, and no tracked file in the project changes. `git status` stays clean.
-
-Then:
-
-```bash
-# 1. this project's real checks
-$EDITOR ~/dev/webapp/.centuria/checks.sh
-
-# 2. base_branch, protected_paths, merge_policy
-$EDITOR ~/dev/webapp/.centuria/config.json
-
-# 3. the three GitHub labels
+# 4. create the three GitHub labels, then verify the installation
 legio labels webapp
-
-# 4. health check
 legio doctor webapp
+
+# 5. open an issue, label it "centuria", and drive
+legio run webapp --max-steps 20
 ```
 
-`checks.sh` ships as a placeholder that exits 1 on purpose. A gate that passes when
-unconfigured is worse than no gate: it turns "scripts decide whether it works" into
-theatre.
+`legio add` copies the pipeline into the project and excludes everything it writes in
+`.git/info/exclude` — **not** `.gitignore`. No tracked file changes and `git status` stays
+clean.
 
----
-
-## Driving it
-
-**A centuria can run a whole job by itself; legio only discovers, installs and reports.**
+While it runs:
 
 ```bash
-# one: let legio forward (it picks the host spec for you)
-legio run webapp --agent claude-code --max-steps 20
-
-# two: let legio produce the prompt, paste it into an agent yourself
-legio next webapp
-
-# three: skip legio, drive the centuria directly
-cd ~/dev/webapp
-.centuria/bin/centuria run
-.centuria/bin/centuria run --all      # up to `concurrency` jobs at once
+legio inbox                     # waiting jobs, with the reason
+legio status --all              # every job, active or not
+legio next webapp               # a pasteable prompt, if you'd rather drive the agent yourself
+legio say webapp:001-... "make the flag default to on"   # send it back to build
+legio reject webapp:001-... "out of scope for now"
 ```
 
-All three run the same loop: `job next` → host process(es) → `job done`.
+When a PR is ready, open it on GitHub and merge it. The next `legio sync` notices the
+merge and closes the job out.
 
-**Reviewers run concurrently.** `job next` returns the whole pending review set as one
-work order (`kind: reviews`), the runner starts one process per reviewer, then collects
-them all before settling. Four reviewers cost one reviewer's wall-clock time, not four.
-They are independent by construction: same diff, each writes its own file.
+Prefer to drive it yourself? `legio next` prints the exact prompt to paste into an agent,
+and `.centuria/bin/centuria run` works without legio if you pass it a host spec.
 
-## Centuria commands
+## The cast
+
+The names are Roman army posts, so **the name tells you nothing about the function** —
+each role file opens with the line that does. A **surface** is the part of the change
+that matters: `ui` means a person will see it, `security` means it touches privileges,
+secrets or dependencies. Here is the whole cast:
+
+| Roman name | Plain English | What it decides | Writes | When |
+|---|---|---|---|---|
+| **Tesserarius** | doorkeeper | Is this worth building, how much of it, how risky is it? | `intake.md` | once, at the door |
+| **Signifer** | spec-writer | What exactly does "done" mean, and what is out of scope? | `spec.md` | after ACCEPT |
+| **Fabri** | builder | Build it, run the checks, commit, push, open the PR. | `build.md` + code | every round |
+| **Probator** | inspector | Is it correct, in scope, and actually tested? | `review-probator.md` | every round |
+| **Medicus** | surgeon | Security: injection, privilege, leaks, dependencies. | `review-medicus.md` | `security` surface |
+| **Mensor** | surveyor | Can an ordinary user get through it, and recover from errors? | `review-mensor.md` | `ui` surface |
+| **Librator** | level-keeper | Alignment, spacing, hierarchy, theme. | `review-librator.md` | `ui` surface |
+| **Primus Pilus** | arbiter | Can this go in, or does a human have to decide? | `decision.md` | after reviews pass |
+
+The cast is fixed; the instances are not. A low-risk job that runs all three rounds and
+finally passes spawns nine agent processes; add the UI and security reviewers and it is
+eighteen. Each role is bound to a **tier** (`light` / `medium` / `strong`), which the host
+file turns into a concrete model — so routing is a table lookup, not a prompt.
+
+<p align="center">
+  <img src="web/docs/cast.jpg" alt="MILITES: the eight roles with their chibi portraits and duty lines" width="880">
+</p>
+
+<p align="center"><i>MILITES — the cast page in the dashboard. Two roles are on duty.</i></p>
+
+## Camp Legio — the dashboard
+
+You do not have to read terminal tables to see what is happening. `web/` turns every
+stationed project into a tent in a Roman camp, with its jobs on the **TABULA OPERUM**
+and the role that is working right now at the desk. It is read-only by construction: it
+reads `centuria view` and the `live.json` heartbeat, and writes nothing to any project.
 
 ```bash
-cd ~/dev/webapp
-
-.centuria/bin/centuria run [<job>]        # drive as far as it can go
-.centuria/bin/centuria run --all          # up to concurrency jobs, one process each
-.centuria/bin/centuria next <job>         # the next step (work order JSON)
-.centuria/bin/centuria done <job>         # settle: advance if the artifacts justify it
-.centuria/bin/centuria gate <job>         # run checks.sh in the job's worktree
-.centuria/bin/centuria summary            # one table
-.centuria/bin/centuria view               # JSON
-.centuria/bin/centuria queue              # what is queued
-.centuria/bin/centuria create <issue>     # turn a labelled issue into a job
-.centuria/bin/centuria route <job>        # re-route the roster
-.centuria/bin/centuria advance <job> <stage>   # move it by hand (illegal moves refused)
+python3 web/serve.py            # http://127.0.0.1:8766
+python3 web/serve.py --demo     # a fake camp you can click around, no projects needed
 ```
 
-`--host-spec` is optional: without it, `.centuria/config.json`'s `default_host_spec` is
-used. centuria does not own a host registry — the registry is one file set in
-`legio/hosts/`, and a project only remembers which one it prefers.
+| | |
+|:---:|:---:|
+| ![The tent](web/docs/tent.jpg) | ![A job](web/docs/job.jpg) |
+| **The tent.** One project's jobs in three lanes — waiting, in progress, finished — with the on-duty role at the desk. | **The job.** Stage, round, gate, PR, cost, and what is waiting on a human. |
+| ![The scrolls](web/docs/scrolls.jpg) | ![The quiet tent](web/docs/quiet.jpg) |
+| **The scrolls.** Read the issue, intake, spec, build, checks, reviews and agent logs in one pane. | **The quiet tent.** When nothing is running, the desk says so instead of faking it. |
 
-## legio commands
+The board knows nothing about stages: it turns `active` / `waiting` / `terminal` into
+lanes. The desk knows who is working from a `live.json` heartbeat around each agent call,
+so parallel reviewers and concurrent jobs both show up. Full reference, endpoints and the
+art pipeline: [`web/README.md`](web/README.md).
 
-```
-legio add <path> [--host <name>]   station a centuria
-legio remove <path>                take it out again
-legio ls                           centuriae and their overall state
-legio status [--all]               every job
-legio inbox                        what is waiting on you, worst first
-legio run <project>[:<job>]        turn new issues into jobs, then let centuria drive
-legio next <project>[:<job>]       the next step, with a pasteable prompt
-legio hosts [--json]               the available host adapters (JSON with --json)
-legio labels <project>             create the three GitHub labels
-legio sync [<project>]             turn new labelled issues into jobs, show the queue
-legio say <project>:<job> <text>   feedback: the job goes back to build
-legio reject <project>:<job> <text>  reject a job that waits on you
-legio doctor [<project>]           is this centuria still healthy
-```
+<p align="center"><i>Screenshots are from <code>--demo</code> mode, so the data is fake — the layout is the real thing.</i></p>
 
----
+## swarm — reviews without the factory
 
-## Layout
-
-```
-legio/                          the system
-├── legio                       the command
-├── config.json                 projects_root, stale threshold
-├── hosts/                      one JSON per agent CLI
-├── centuria/                   the template copied into a project
-│   ├── bin/centuria            single entry point, forwards to the three below
-│   ├── bin/job                 the state machine; the only writer of job.json
-│   ├── bin/run                 the loop and the host adapter; starts agents
-│   ├── bin/gate                runs checks.sh in a worktree
-│   ├── roles/*.md              the eight roles
-│   ├── config.json             routing, protected paths, merge policy
-│   └── checks.sh               this project's checks (you fill this in)
-├── swarm/                      review-only: a diff in, review files out
-│   ├── swarm                   the command (reviewers and the repo, nothing else)
-│   ├── api.py                  the library seam: review(...) -> Report
-│   ├── hostkit.py              host adapter: build/spawn/collect
-│   ├── roles/*.md              the five reviewers
-│   ├── hosts/fake.json         test harness; real hosts come from ../hosts
-│   └── config.json             reviewer tiers, default host
-└── web/                        the dashboard: a camp of tents, one per centuria
-    ├── serve.py                stdlib server: static files + GET /api/camp
-    ├── index.html app.js styles.css
-    ├── assets/                 generated art (WebP + manifest), committed
-    ├── tools/prepare_assets.py trims, cuts out and slices the raw art
-    └── tests/                  stdlib tests, no network, no model
-```
-
-Stationed, a project looks like:
-
-```
-<project>/
-├── .centuria/
-│   ├── bin/ roles/ config.json checks.sh version.json
-│   └── jobs/<job>/           issue.md intake.md spec.md build.md round-N/ decision.md
-├── .worktrees/<job>/         one worktree per job
-└── (the project's own code — not one factory file in it)
-```
-
----
-
-## The pipeline
-
-```
-issue labelled `centuria`
-   │
-   ▼
-Tesserarius ──NEEDS-INFO──► asks the author, parks
-   │        └─REJECT─────► says why, drops the label
-   ▼ ACCEPT (scope may be cut) + RISK / SURFACES
-route (script)               → roster + model tiers
-   ▼
-Signifer                     → spec.md
-   ▼
-Fabri                        → commit · push · draft PR "Closes #n"
-   ▼            ▲
-gate (script) ──FAIL──┘      checks.sh + protected_paths; no reviewer runs on a red build
-   ▼ PASS
-reviewers (started together) ──CHANGES──► Fabri (at most max_rounds rounds)
-   ▼ all PASS
-Primus Pilus ──APPROVE──► PR ready, waiting for you
-              └─ESCALATE─► PR ready, with the one question you have to answer
-   ▼
-you merge the PR            merge_policy defaults to human: legio never merges for you
-   ▼
-merged (legio sync notices and closes the job out)
-```
-
----
-
-## Adding a reviewer
-
-Almost free, because routing is a table lookup:
-
-1. add a `surface_reviewers` entry in `config.json`
-   (`"perf": {"ballistarius": "medium"}`)
-2. add `roles/ballistarius.md`, copying the shape of an existing role
-3. teach Tesserarius's prompt that this surface exists
-
-The state machine, the gate and `route` do not change. If the doorkeeper emits a surface
-that `config.json` does not list, `route` **fails loudly** instead of silently dropping
-it.
-
-Adding a **stage** is the expensive change: `TRANSITIONS` at the top of `bin/job` and the
-branches inside `advance()`.
-
-## swarm — the review half
-
-`swarm/` is the second tool in this repo, and it is deliberately small: **review only**.
-No issue, no intake, no spec, no build, no rounds, no merge — you hand it a diff and it
-hands back reviewers' verdicts.
+`swarm` is the review half of the system, extracted as a small standalone tool. No issue,
+no spec, no build, no rounds, no merge — **you hand it a diff and it hands back verdicts.**
 
 ```bash
 ./swarm/swarm run code-reviewer on ~/dev/webapp    # one reviewer
 ./swarm/swarm run all on ~/dev/webapp              # all five, at the same time
 ```
 
-| name | tier | judges | centuria role |
-|---|---|---|---|
-| `code-reviewer` | medium | correct, in scope, actually tested | Probator |
-| `security-reviewer` | strong | injection, privilege, leaks, dependencies | Medicus |
-| `ux-reviewer` | medium | can an ordinary user get through it | Mensor |
-| `ui-reviewer` | light | alignment, spacing, hierarchy, theme | Librator |
-| `ios-reviewer` | medium | Apple HIG conformance and App Store review risk | — (new) |
+A run lands in `<repo>/.swarm/<run-id>/`: the diff, one `review-<name>.md` per reviewer,
+a combined `report.md` and `report.json`. The five reviewers are `code-reviewer`,
+`security-reviewer`, `ux-reviewer`, `ui-reviewer` and `ios-reviewer`. Exit codes: `0` all
+PASS · `1` any CHANGES · `2` operational error · `3` empty diff. It keeps no state between
+runs and never comments, labels or merges. Full reference:
+[`swarm/README.md`](swarm/README.md).
 
-It keeps the two things that matter from the pipeline above — the role prompts and the
-verdict contract (`VERDICT: PASS` / `VERDICT: CHANGES` as the first line of
-`review-<name>.md`) — and it borrows `hosts/` rather than copying it, so one host fix
-reaches both tools. A run lands in `<repo>/.swarm/<run-id>/` and that path goes into the
-project's `.git/info/exclude`, so the reviewed project's `git status` stays clean.
+## Design promises
 
-Exit codes: `0` all PASS · `1` any CHANGES · `2` operational error · `3` empty diff. It
-never merges, comments or labels, and it keeps no state between runs. Full reference:
-`swarm/README.md`.
+- **Your `git status` stays clean.** Everything legio creates in a project is excluded
+  through `.git/info/exclude`, never `.gitignore`. No tracked file in your project changes.
+- **One writer for job state.** Only `centuria/bin/job` writes `job.json`: it holds a file
+  lock, writes atomically, and validates every transition. Anything that wants to change
+  state goes through it.
+- **It never merges for you by default.** `merge_policy` is `human`: an APPROVE only turns
+  the PR ready and tells you. The merge button is yours.
+- **No lock-in.** Roles are markdown, hosts are JSON, state is plain files. Copy a newer
+  template over `.centuria/` by hand (merging `config.json` and `checks.sh`); delete legio
+  and the project still has its state machine, given a host spec.
 
-## Camp Legio — the dashboard
+## Under the hood
 
-`web/` is a local, read-only webapp that shows the centuriae as a Roman camp: one tent
-per project, and inside a tent a **TABULA OPERUM** (AD FACIENDUM / IN CURSU / FACTUM)
-plus the roles that are working right now (concurrency > 1 is shown as a shift:
-the freshest at the desk, the rest in a side panel). It is a separate tool: it reads the same
-contracts (`centuria view`, the role files, the live heartbeat) and writes nothing.
+```mermaid
+flowchart LR
+    subgraph L["legio — one copy on your machine"]
+        legio["discovers projects<br/>turns labelled issues into jobs<br/>owns hosts/*.json"]
+    end
+    subgraph P["each project — .centuria/ — one copy per project"]
+        cen["state machine, roles, artifacts<br/>job.json + job folders"]
+        wt["one git worktree per job"]
+    end
+    subgraph H["agent CLIs"]
+        cli["Claude Code · Codex · DSH · Gemini"]
+    end
 
-```bash
-python3 web/serve.py              # http://127.0.0.1:8766, the real camp
-python3 web/serve.py --demo       # a fake camp, for design work
+    legio -->|"asks .centuria/bin/job<br/>view · next · queue · create"| cen
+    cen -->|"one prompt per role"| cli
+    cli -->|"writes one file, exits"| cen
+    cen --- wt
 ```
 
-Each job is a pinned note; the lane comes from `active` / `waiting` / `terminal`, so the
-UI never learns stage semantics. `bin/run` writes
-`.centuria/jobs/<id>/live.json` around every agent call (`roles`, `round`, `started`,
-`pid`), which is how the desk knows who is on duty; a file older than ten minutes is
-shown as "last seen", not live. Full reference, asset pipeline and tests:
-`web/README.md`.
+The split is the whole design: **legio knows about projects and agent CLIs; a centuria
+knows about stages and roles.** legio never reads `job.json` — it shells out to the
+centuria's own CLI for a view, a work order or the queue, and forwards commands. The loop
+itself (`job next` → agent → `job done`) belongs to the centuria's runner, so the two sides
+never need to share a vocabulary.
 
-## Two hard rules
-
-1. **`job.json` has exactly one writer**: `bin/job`. It holds a file lock, writes
-   atomically, and validates every transition. Anything that wants to change state has to
-   go through it.
-2. **legio does not merge.** The default `merge_policy` is `human`: an `APPROVE` only
-   turns the PR ready and tells you. Merging is a click you make. Set
-   `merge_policy: "legio"` if you want it automated.
-
-## Model tiers
-
-Roles are bound to a **tier** (`light` / `medium` / `strong`), not to a model name, so a
-centuria's config stays host-agnostic. The tier becomes a concrete model in the **host**
-file:
-
-- Claude: `haiku` / `sonnet` / `opus`
-- Codex: something else
-- switching hosts changes the profile, not the centuria
-
-Non-reviewer roles are set in `role_tiers` (Tesserarius, Signifer, Fabri and Primus Pilus
-are all `strong`); reviewers are routed by risk and surface.
-
-Default routing:
-
-| risk | reviewer | tier |
-|---|---|---|
-| low | Probator | light |
-| medium | Probator | medium |
-| high | Probator | strong |
-| + `ui` | Mensor / Librator | medium / light |
-| + `security` | Medicus | strong |
-
-A low-risk change with no UI runs one cheap reviewer; a change that touches both UI and
-permissions runs four.
-
----
-
-## Host adapters
+<details>
+<summary>Repository layout</summary>
 
 ```
-legio/hosts/
-├── claude-code.json   role file becomes a real system prompt (--append-system-prompt-file)
-├── codex.json         role file is concatenated; codex has no separate system-prompt flag
-├── dsh.json           dsh headless; needs DEEPSEEK_API_KEY from the keychain
-├── gemini.json        untested (gemini is not installed here)
-├── echo.json          dry run: prints the prompt
-└── fake.json          test harness: writes the artifact an agent would write
+legio/
+├── legio                  the command (add, run, next, inbox, doctor, ...)
+├── config.json            projects_root
+├── hosts/                 one JSON per agent CLI (claude-code, codex, dsh, ...)
+├── centuria/              the template copied into a project
+│   ├── bin/               centuria, job (state machine), run (loop), gate (checks)
+│   ├── roles/             the eight role prompts
+│   ├── config.json        routing, protected paths, merge policy
+│   └── checks.sh          the project's real checks (you fill this in)
+├── swarm/                 review-only: diff in, review files out
+├── web/                   the Camp Legio dashboard (stdlib server + assets)
+├── docs/                  art direction and design notes
+└── tests/                 host-registry and heartbeat tests, plus the fake-agent harness
 ```
 
-```bash
-legio hosts
-legio run webapp --agent claude-code --max-steps 20
-legio run webapp --dry-run                 # show the exact command
-legio run webapp --agent claude-code --yolo   # add the "do not ask me" flags
-```
+</details>
 
-A profile is a dozen fields:
+## Go deeper
 
-| field | job |
+| document | what is inside |
 |---|---|
-| `command` | binary plus fixed flags |
-| `yolo` | flags added only with `--yolo` (they disable every approval prompt) |
-| `role.mode` | `system` (separate system prompt) or `concat` (merged into the prompt) |
-| `prompt.via` | `stdin` or `arg` |
-| `cwd.mode` | `process` or `flag` (codex's `-C`) |
-| `model.flag` | how to name a model |
-| `model_tiers` | **tier → concrete model** (host-specific) |
-| `env` | variables to inject: `{"value": "..."}` or `{"shell": "..."}` |
-| `session` | `new` / `resume` flag templates, so a role can continue its own session |
-| `host_paths` | paths this host creates in a project; `legio add` excludes them |
-| `timeout_seconds` | per invocation |
+| [`AGENTS.md`](AGENTS.md) | the complete technical reference: contracts, state machine, host profiles, recipes for adding a role, stage or host |
+| [`swarm/README.md`](swarm/README.md) | the review-only tool: flags, exit codes, the Python library API |
+| [`web/README.md`](web/README.md) | the dashboard: endpoints, read-only guarantees, asset pipeline |
+| [`docs/ui/`](docs/ui/) | the art direction and the Camp Legio design brief |
+| [`centuria/roles/`](centuria/roles/) | the eight role prompts themselves |
 
-**The prompt must never start with `-`.** When it goes in as `argv`, a leading dash is
-parsed as an option (dsh answered `unknown option`, echoing the whole prompt back).
-`bin/run` therefore builds the prompt as: job header, then role file, then this round's
-task.
-
-**Session reuse.** A role that runs more than once in a job (Fabri across rounds, a
-reviewer across rounds) can keep its conversation instead of rediscovering the repo every
-time. The runner derives a stable uuid from `(job, role)`, passes the profile's
-`session.new` flags the first time and `session.resume` flags afterwards, and records
-that with a `.session-<role>` marker in the job folder:
-
-```json
-"session": {"new":    ["--session-id", "{session_id}"],
-            "resume": ["--resume",    "{session_id}"]}
-```
-
-A host without a `session` block simply starts fresh every time (dsh headless has no
-resume flag). Delete `.centuria/jobs/<id>/.session-*` to force a new session.
-
-**`--yolo` is off by default.** A non-interactive agent has to be pre-authorized to use
-its tools, or it stops to ask and the pipeline hangs; but those flags disable every
-approval, so you opt in explicitly.
-
-**Secrets** stay out of the JSON and out of your shell:
-
-```json
-"env": {"DEEPSEEK_API_KEY": {
-  "shell": "security find-generic-password -a \"$USER\" -s deepseek-api -w"}}
-```
-
-```bash
-security add-generic-password -a "$USER" -s deepseek-api -w 'sk-...'
-```
-
-The shell form is resolved only when an agent is spawned, so the key lives in the macOS
-keychain and never in a dotfile or a dotfiles repo.
-
----
-
-## Testing the pipeline itself
-
-`legio/tests/fake-agent.py` plus `hosts/fake.json` run a whole job with no model and no
-network to GitHub (a `gh` stub provides the API):
-
-```bash
-legio run <project> --agent fake --max-steps 20
-```
-
-Every agent invocation is written next to the job as `agent-<round>-<role>.log`, holding
-the command, stdout and stderr, so any failure can be read back later.
-
-swarm uses the same trick through `swarm/tests/fake-reviewer.py` plus
-`swarm/hosts/fake.json`:
+The repo tests itself offline — no model, no network:
 
 ```bash
 python3 -m unittest discover -s swarm/tests -v
+python3 -m unittest discover -s web/tests -v
 ```
 
-No model and no network there either; it covers the reviewer fan-out, all exit codes,
-the `--diff`/`--spec` paths, a crashed reviewer, and the clean-`git status` guarantee.
+---
 
-## What a job cost
-
-```bash
-legio/tests/token-report.py 001-add-a-json-flag
-```
-
-Reads the host's own session logs and prints, per role: agent processes, model requests
-("steps"), how many steps actually executed checks, and input / output / cache-read tokens.
-It is host-specific and a development tool, not part of the pipeline.
-
-It exists because **the bill is not proportional to the token total**: cache reads usually
-cost a fraction of fresh input, while output costs more per token. Multiply each column by
-your host's price; do not read the token total as money.
-
-The useful signal is steps. Each step resends the whole conversation, so cost grows
-roughly quadratically inside one agent process. Cutting redundant steps is the only lever
-that compounds — but a step cut that causes another build round is a loss, so always
-compare "cost" with "did the PR pass review first time".
+<p align="center"><i>No hosted service, no account, no telemetry. Python standard library and the agent CLI you already pay for.</i></p>
