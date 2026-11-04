@@ -98,27 +98,27 @@ class CastAndLive(Fixture):
         self.assertTrue(all(cast[i]["duty"] for i in range(8)))
         self.assertEqual(cast[0]["function"], "tesserarius-function")
 
-    def test_live_is_read_and_aged(self):
+    def test_every_concurrent_live_is_returned_freshest_first(self):
         from datetime import datetime, timezone
         fresh = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         project = self.project("alpha", live={"job": "001-example",
                                              "roles": ["fabri", "medicus"],
                                              "started": fresh})
-        live = SERVE.read_live(project)
-        self.assertEqual(live["roles"], ["fabri", "medicus"])
-        self.assertEqual(live["job"], "001-example")
-        self.assertIsInstance(live["age_seconds"], int)
-        self.assertFalse(live["stale"])
+        # a second job working at the same time
+        second = project / ".centuria" / "jobs" / "002-other"
+        second.mkdir()
+        (second / "live.json").write_text(json.dumps({
+            "roles": ["signifer"], "round": 2,
+            "started": "2020-01-01T00:00:00Z", "pid": 2}))
+        lives = SERVE.read_lives(project)
+        self.assertEqual(len(lives), 2)
+        self.assertEqual(lives[0]["job"], "001-example")
+        self.assertFalse(lives[0]["stale"])
+        self.assertEqual(lives[1]["job"], "002-other")
+        self.assertTrue(lives[1]["stale"])
 
-        old = "2020-01-01T00:00:00Z"
-        path = project / ".centuria" / "jobs" / "001-example" / "live.json"
-        data = json.loads(path.read_text())
-        data["started"] = old
-        path.write_text(json.dumps(data))
-        self.assertTrue(SERVE.read_live(project)["stale"])
-
-    def test_missing_live_is_none(self):
-        self.assertIsNone(SERVE.read_live(self.project("alpha")))
+    def test_missing_live_is_an_empty_list(self):
+        self.assertEqual(SERVE.read_lives(self.project("alpha")), [])
 
 
 class Payload(Fixture):
@@ -136,11 +136,12 @@ class Payload(Fixture):
         self.assertEqual(payload["jobs"], [])
         self.assertIn("centuria view", payload["error"])
 
-    def test_bound_live_rides_along(self):
+    def test_lives_ride_along(self):
         payload = self.payload(
             "alpha", live={"job": "001-example", "roles": ["fabri"],
                            "started": "2026-11-03T10:00:00Z"})
-        self.assertEqual(payload["live"]["roles"], ["fabri"])
+        self.assertEqual(len(payload["lives"]), 1)
+        self.assertEqual(payload["lives"][0]["roles"], ["fabri"])
 
 
 class Discovery(Fixture):
@@ -167,7 +168,9 @@ class Demo(unittest.TestCase):
             self.assertIn("jobs", project)
             self.assertIn("cast", project)
         legio = camp["projects"][0]
-        self.assertEqual(legio["live"]["roles"], ["fabri"])
+        self.assertEqual([live["job"] for live in legio["lives"]],
+                         ["004-camp-ui", "005-status-api"])
+        self.assertEqual(legio["lives"][0]["roles"], ["fabri"])
         self.assertEqual(len(legio["cast"]), 8)
         broken = camp["projects"][-1]
         self.assertFalse(broken["ok"])

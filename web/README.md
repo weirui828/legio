@@ -49,7 +49,8 @@ legio's `config.json`, or `--root`), then for each project:
   `id, issue, title, stage, round, round_limit, pr, gate, reviews, cost_usd,
   active, waiting, terminal, human_reason` — no worktree paths, prompts, logs,
   config or secrets reach the browser;
-- reads the newest `.centuria/jobs/*/live.json` for "who is at the desk";
+- reads every `.centuria/jobs/*/live.json` for "who is at the desk" (concurrency
+  can be more than one, so several jobs can be working at once);
 - parses `.centuria/roles/*.md` (frontmatter + first blockquote) for the cast.
 
 `GET /api/camp` is the only endpoint; every other method is 405. There are no
@@ -64,9 +65,13 @@ spawns an agent and deletes it when the agent exits:
 {"roles": ["fabri"], "round": 1, "started": "2026-11-03T18:00:00Z", "pid": 12345}
 ```
 
-Parallel reviewers list several roles. The dashboard polls every 2.5s; a
-`live.json` older than 10 minutes (a killed process) is shown as "last seen",
-never as live.
+Parallel reviewers list several roles, and **two jobs can run at the same time**
+(concurrency 2): each job writes its own `live.json`, so the tent shows the
+freshest one at the desk, a small "also at work" panel for the rest, a working
+pip on every note whose job is running, and a live dot on the camp banner. The
+cast strip and MILITES light up every role that is on duty. The dashboard polls
+every 2.5s; a `live.json` older than 10 minutes (a killed process) is shown as
+"last seen", never as live.
 
 ## Layout
 

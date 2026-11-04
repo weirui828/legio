@@ -120,9 +120,13 @@ def read_jobs(project: Path) -> list[dict]:
             if isinstance(job, dict)]
 
 
-def read_live(project: Path) -> dict | None:
-    """The freshest live.json under this project's job folders."""
-    best = None
+def read_lives(project: Path) -> list[dict]:
+    """Every live.json under this project's job folders, freshest first.
+
+    Concurrency > 1 means several jobs can be working at the same time, so
+    this is a list, not "the newest one"; the dashboard shows all of them.
+    """
+    found: list[dict] = []
     for path in (project / ".centuria" / "jobs").glob("*/live.json"):
         try:
             data = json.loads(path.read_text())
@@ -145,16 +149,16 @@ def read_live(project: Path) -> dict | None:
             "age_seconds": age,
             "stale": age > LIVE_STALE,
         }
-        if best is None or (candidate["age_seconds"] or 0) < (best["age_seconds"] or 0):
-            best = candidate
-    return best
+        found.append(candidate)
+    found.sort(key=lambda item: item["age_seconds"])
+    return found
 
 
 def project_payload(path: Path) -> dict:
-    live = None
+    lives: list[dict] = []
     try:
         jobs = read_jobs(path)
-        live = read_live(path)
+        lives = read_lives(path)
         ok, error = True, None
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
         jobs, ok, error = [], False, str(exc)
@@ -169,7 +173,7 @@ def project_payload(path: Path) -> dict:
         "error": error,
         "jobs": jobs,
         "cast": cast,
-        "live": live,
+        "lives": lives,
     }
 
 
@@ -213,6 +217,8 @@ def demo_camp() -> dict:
                 "jobs": [
                     demo_job("004-camp-ui", 6, "Camp Legio: a cozy camp UI",
                              "build", active=True),
+                    demo_job("005-status-api", 5, "Serve the camp status as JSON",
+                             "spec", active=True),
                     demo_job("003-add-ui-to-legio", 4, "Add UI to legio",
                              "needs-human", waiting=True,
                              reviews={"probator": "PASS", "mensor": "CHANGES"},
@@ -222,9 +228,12 @@ def demo_camp() -> dict:
                              reviews={"probator": "PASS"}, cost=0.87),
                 ],
                 "cast": cast,
-                "live": {"roles": ["fabri"], "round": 1,
-                         "started": now_iso(), "job": "004-camp-ui",
-                         "age_seconds": 6, "stale": False},
+                "lives": [
+                    {"roles": ["fabri"], "round": 1, "started": now_iso(),
+                     "job": "004-camp-ui", "age_seconds": 6, "stale": False},
+                    {"roles": ["signifer"], "round": 1, "started": now_iso(),
+                     "job": "005-status-api", "age_seconds": 19, "stale": False},
+                ],
             },
             {
                 "name": "seamless", "path": "", "ok": True, "error": None,
@@ -237,9 +246,9 @@ def demo_camp() -> dict:
                              human_reason="waiting for the author", round=2),
                 ],
                 "cast": cast,
-                "live": {"roles": ["medicus", "probator"], "round": 1,
-                         "started": now_iso(), "job": "001-build-seamless",
-                         "age_seconds": 21, "stale": False},
+                "lives": [{"roles": ["medicus", "probator"], "round": 1,
+                           "started": now_iso(), "job": "001-build-seamless",
+                           "age_seconds": 21, "stale": False}],
             },
             {
                 "name": "webapp", "path": "", "ok": True, "error": None,
@@ -248,12 +257,12 @@ def demo_camp() -> dict:
                              waiting=False, active=True),
                 ],
                 "cast": cast,
-                "live": None,
+                "lives": [],
             },
             {
                 "name": "broken", "path": "", "ok": False,
                 "error": "centuria view timed out", "jobs": [], "cast": [],
-                "live": None,
+                "lives": [],
             },
         ],
     }

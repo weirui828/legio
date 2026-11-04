@@ -185,6 +185,8 @@ function emptyCamp() {
 function tentNode(project, index) {
   const c = counts(project);
   const broken = !project.ok;
+  const workingNow = (project.lives || [])
+    .filter((live) => !live.stale && live.roles && live.roles.length).length;
   const art = broken ? 'tent-warped'
     : (hash01(project.name) > 0.62 ? (hash01(project.name) > 0.81 ? 'tent-alt-1' : 'tent-alt-2') : 'tent');
   return `<button class="tent ${broken ? 'broken' : ''}" type="button"
@@ -196,6 +198,8 @@ function tentNode(project, index) {
       <span class="legion-line">
         <span class="legion-no">LEGIO ${roman(index + 1)}</span>
         <span class="legion-name">${esc(project.name)}</span>
+        ${workingNow ? `<i class="live-dot" title="${
+  workingNow === 1 ? '1 role is working' : `${workingNow} roles are working`}"></i>` : ''}
       </span>
       <span class="tent-counts ${broken ? 'broken-tag' : ''}">${broken
     ? 'cannot read'
@@ -265,11 +269,15 @@ function renderTentError(project) {
 
 function renderTent(project) {
   if (!project.ok) { renderTentError(project); return; }
-  const live = project.live;
-  const onDuty = live && !live.stale && live.roles && live.roles.length
-    ? live.roles[0] : null;
-  const workingJob = live && live.job
-    ? (project.jobs || []).find((job) => job.id === live.job) : null;
+  const lives = (project.lives || [])
+    .filter((live) => !live.stale && live.roles && live.roles.length);
+  const onDuty = new Set(lives.flatMap((live) => live.roles));
+  const primary = lives[0] || null;
+  const coWorkers = lives.slice(1);
+  const workingIds = new Set(lives.map((live) => live.job));
+  const workingJob = primary && primary.job
+    ? (project.jobs || []).find((job) => job.id === primary.job) : null;
+  const staleLive = (project.lives || []).find((live) => live.stale);
   const lanes = { todo: [], doing: [], done: [] };
   for (const job of project.jobs || []) {
     if (job.terminal) lanes.done.push(job);
@@ -291,13 +299,13 @@ function renderTent(project) {
           <span>AD FACIENDUM</span><span>IN CURSU</span><span>FACTUM</span>
         </div>
         <div class="board-lanes">
-          ${lane('todo', lanes.todo)}
-          ${lane('doing', lanes.doing)}
-          ${lane('done', lanes.done)}
+          ${lane('todo', lanes.todo, workingIds)}
+          ${lane('doing', lanes.doing, workingIds)}
+          ${lane('done', lanes.done, workingIds)}
         </div>
       </section>
       <section class="role-stage" aria-label="the working role">
-        ${roleStage(project, onDuty, workingJob)}
+        ${roleStage(project, primary, coWorkers, workingJob, staleLive)}
       </section>
     </main>
     ${castStrip(project, onDuty)}
@@ -306,21 +314,22 @@ function renderTent(project) {
   </div>`;
 }
 
-function lane(kind, jobs) {
+function lane(kind, jobs, workingIds) {
   return `<div class="lane lane-${kind}">
     <div class="notes">${jobs.length
-    ? jobs.map(note).join('')
+    ? jobs.map((job) => note(job, workingIds.has(job.id))).join('')
     : '<span class="lane-empty">nothing here</span>'}</div>
   </div>`;
 }
 
-function note(job) {
+function note(job, working) {
   const marks = Object.entries(job.reviews || {}).map(([role, verdict]) => {
     const short = role.slice(0, 3).toUpperCase();
     return `<i class="mark ${verdict === 'PASS' ? 'pass' : 'changes'}"
       title="${esc(role)}: ${esc(verdict)}">${short}</i>`;
   }).join('');
-  return `<button class="note" type="button" data-job="${esc(job.id)}">
+  return `<button class="note ${working ? 'working' : ''}" type="button" data-job="${esc(job.id)}"
+      title="${working ? 'a role is working on this job right now' : ''}">
     <span class="note-title">${esc(job.title)}</span>
     <span class="note-meta">r${esc(job.round ?? 0)}/${esc(job.round_limit ?? 3)}${
   job.gate ? ` · gate ${job.gate === 'PASS' ? '✓' : '✗'}` : ''}</span>
@@ -329,25 +338,43 @@ function note(job) {
   </button>`;
 }
 
-function roleStage(project, onDuty, job) {
-  if (onDuty && ROLE_FILES.includes(onDuty)) {
-    const title = roleTitle(onDuty, project.cast);
-    const verb = ROLE_VERB[onDuty] || 'working';
+function roleStage(project, primary, coWorkers, job, staleLive) {
+  if (primary && ROLE_FILES.includes(primary.roles[0])) {
+    const role = primary.roles[0];
+    const title = roleTitle(role, project.cast);
+    const verb = ROLE_VERB[role] || 'working';
     return `<div class="worker-wrap">
       <div class="glow" aria-hidden="true"></div>
       <img class="hearts" src="${asset('hearts-sparkles')}" alt="" aria-hidden="true">
-      <img class="worker" src="${asset(`role-${onDuty}-working`)}" alt="${esc(title)} at work">
+      <img class="worker" src="${asset(`role-${role}-working`)}" alt="${esc(title)} at work">
       <div class="bubble"><b>${esc(title)}</b> is ${esc(verb)}${
   job ? `<span class="bubble-job">${esc(job.title)}</span>` : ''}</div>
+      ${shiftPanel(project, coWorkers)}
     </div>`;
   }
-  const lastSeen = project.live && project.live.stale && project.live.roles?.length
-    ? `Last seen <b>${esc(roleTitle(project.live.roles[0], project.cast))}</b> ${
-      ago(project.live.age_seconds)} ago.`
+  const lastSeen = staleLive && staleLive.roles && staleLive.roles.length
+    ? `Last seen <b>${esc(roleTitle(staleLive.roles[0], project.cast))}</b> ${
+      ago(staleLive.age_seconds)} ago.`
     : 'The tent is quiet. Nobody is sweating yet.';
   return `<div class="worker-wrap quiet">
     <img class="desk" src="${asset('desk')}" alt="">
     <p class="quiet-copy">${lastSeen}</p>
+  </div>`;
+}
+
+function shiftPanel(project, coWorkers) {
+  if (!coWorkers.length) return '';
+  return `<div class="shift" aria-label="also at work">
+    ${coWorkers.map((live) => {
+    const role = live.roles[0];
+    const file = ROLE_FILES.includes(role) ? role : 'fabri';
+    const title = roleTitle(role, project.cast);
+    const other = (project.jobs || []).find((entry) => entry.id === live.job);
+    return `<span class="shift-row">
+      <img src="${asset(`role-${file}`)}" alt="">
+      <span><b>${esc(title)}</b><i>${esc(other ? other.title : live.job)}</i></span>
+    </span>`;
+  }).join('')}
   </div>`;
 }
 
@@ -359,7 +386,7 @@ function castStrip(project, onDuty) {
     ${cast.map((entry) => {
     const role = entry.role;
     const file = ROLE_FILES.includes(role) ? role : 'fabri';
-    const on = role === onDuty;
+    const on = onDuty.has(role);
     return `<button class="chip ${on ? 'on-duty' : ''}" type="button"
         data-role-detail="${esc(role)}" title="${esc(entry.duty || entry.function || '')}">
       <img src="${asset(`role-${file}`)}" alt="">
@@ -373,7 +400,9 @@ function castStrip(project, onDuty) {
 /* ------------------------------------------------------------------ cast */
 
 function renderCast(project) {
-  const on = project.live && !project.live.stale ? project.live.roles || [] : [];
+  const on = new Set((project.lives || [])
+    .filter((live) => !live.stale)
+    .flatMap((live) => live.roles || []));
   const cast = project.cast && project.cast.length
     ? project.cast
     : ROLE_FILES.map((role) => ({ role, title: ROLE_FALLBACK[role], function: '', duty: '' }));
@@ -385,14 +414,14 @@ function renderCast(project) {
       <h1 class="cast-title">MILITES <span>· the cast of ${esc(project.name)}</span></h1>
       <div class="cast-grid">
         ${cast.map((entry) => `
-        <article class="cast-card ${on.includes(entry.role) ? 'on-duty' : ''}">
+        <article class="cast-card ${on.has(entry.role) ? 'on-duty' : ''}">
           <img class="cast-art" src="${asset(`role-${ROLE_FILES.includes(entry.role) ? entry.role : 'fabri'}`)}"
                alt="${esc(roleTitle(entry.role, project.cast))}">
           <h2>${esc(roleTitle(entry.role, project.cast))}</h2>
           <p class="cast-function">${esc(entry.function || 'role')}${
   entry.tier ? ` · ${esc(entry.tier)}` : ''}</p>
           <p class="cast-duty">${esc(entry.duty || '')}</p>
-          <span class="cast-state">${on.includes(entry.role) ? 'on duty' : 'resting'}</span>
+          <span class="cast-state">${on.has(entry.role) ? 'on duty' : 'resting'}</span>
         </article>`).join('')}
       </div>
     </main>
@@ -520,7 +549,8 @@ function fingerprint(data) {
       jobs: (project.jobs || []).map((job) => [job.id, job.stage, job.round,
         job.waiting, job.active, job.terminal, job.gate, job.reviews,
         job.cost_usd, job.human_reason]),
-      live: project.live ? [project.live.roles, project.live.job, project.live.stale] : null,
+      lives: (project.lives || []).map((live) => [live.roles, live.job, live.stale,
+        live.age_seconds > 600]),
       cast: (project.cast || []).map((entry) => [entry.role, entry.title, entry.duty]),
     })),
   });

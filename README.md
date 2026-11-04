@@ -322,7 +322,8 @@ never merges, comments or labels, and it keeps no state between runs. Full refer
 
 `web/` is a local, read-only webapp that shows the centuriae as a Roman camp: one tent
 per project, and inside a tent a **TABULA OPERUM** (AD FACIENDUM / IN CURSU / FACTUM)
-plus the role that is working right now. It is a separate tool: it reads the same
+plus the roles that are working right now (concurrency > 1 is shown as a shift:
+the freshest at the desk, the rest in a side panel). It is a separate tool: it reads the same
 contracts (`centuria view`, the role files, the live heartbeat) and writes nothing.
 
 ```bash
