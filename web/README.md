@@ -36,9 +36,12 @@ lit.
 **MILITES.** The eight roles with their name, function, tier and the duty line
 from their role file; the one on duty is ringed in brass.
 
-Notes are clickable (job facts), the cast chips are clickable (role duty), and
+Notes are clickable: a wide job panel opens with the stage, round, gate, PR,
+cost, what waits on a human and the review verdicts, and it has a deep link
+(`#/legion/<name>/job/<id>`). The cast chips are clickable (role duty), and
 `M` / `L` / `N` / `Esc` open the cast, the legions, the waiting list and close a
-panel.
+panel. The job panel is drawn from the same CSS parchment palette — no extra
+art is needed for it.
 
 ## Data (read-only, by construction)
 
@@ -119,5 +122,5 @@ missing job folder is harmless).
 
 ## Screenshots
 
-`docs/camp.jpg`, `docs/tent.jpg` and `docs/cast.jpg` were taken from
-`--demo` mode at 1440x900.
+`docs/camp.jpg`, `docs/tent.jpg`, `docs/cast.jpg`, `docs/quiet.jpg` and
+`docs/job.jpg` were taken from `--demo` mode at 1440x900.

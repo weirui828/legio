@@ -432,8 +432,9 @@ function renderCast(project) {
 
 /* ---------------------------------------------------------------- modals */
 
-function openModal(html) {
+function openModal(html, wide = false) {
   modal.hidden = false;
+  $('.modal-card').classList.toggle('wide', wide);
   $('.modal-body').innerHTML = html;
 }
 
@@ -488,8 +489,10 @@ function showJob(jobId) {
   if (!found) return;
   const { project, job } = found;
   const reviews = Object.entries(job.reviews || {});
-  openModal(`<h2 class="modal-title">${esc(job.title)}</h2>
-    <p class="modal-sub">${esc(project.name)} · ${esc(job.id)} · #${esc(job.issue)}</p>
+  openModal(`<div class="job-panel" data-project="${esc(project.name)}">
+    <p class="job-kicker">TABULA · ${esc(project.name)} · job ${esc(job.id)}</p>
+    <h2 class="modal-title">${esc(job.title)}</h2>
+    <p class="modal-sub">issue #${esc(job.issue)}${job.pr ? ` · PR #${esc(job.pr)}` : ''}</p>
     <dl class="modal-facts">
       <div><dt>stage</dt><dd>${esc(job.stage)}</dd></div>
       <div><dt>round</dt><dd>${esc(job.round)}/${esc(job.round_limit)}</dd></div>
@@ -500,7 +503,11 @@ function showJob(jobId) {
     </dl>
     ${reviews.length ? `<h3 class="modal-h3">reviews</h3><ul class="modal-list">${
   reviews.map(([role, verdict]) => `<li><b>${esc(role)}</b><span>${esc(verdict)}</span></li>`).join('')}</ul>` : ''}
-    <p><a class="modal-link" href="#/legion/${enc(project.name)}">open the tent →</a></p>`);
+    <div class="job-foot">
+      <a class="modal-link" href="#/legion/${enc(project.name)}">← back to the tent</a>
+      <span class="job-id">${esc(job.id)}</span>
+    </div>
+  </div>`, true);
 }
 
 function showRole(role) {
@@ -520,6 +527,8 @@ function parseRoute() {
   if (!raw || raw === '/') return { view: 'camp' };
   let match = raw.match(/^\/legion\/([^/]+)\/cast$/);
   if (match) return { view: 'cast', name: match[1] };
+  match = raw.match(/^\/legion\/([^/]+)\/job\/([^/]+)$/);
+  if (match) return { view: 'tent', name: match[1], job: match[2] };
   match = raw.match(/^\/legion\/([^/]+)$/);
   if (match) return { view: 'tent', name: match[1] };
   return { view: 'camp' };
@@ -535,8 +544,12 @@ function render() {
   const project = state.data.projects.find((p) => p.name === state.route.name);
   if (!project) { location.hash = '#/'; return; }
   if (!project.ok) { renderTentError(project); return; }
-  if (state.route.view === 'cast') renderCast(project);
-  else renderTent(project);
+  if (state.route.view === 'cast') {
+    renderCast(project);
+    return;
+  }
+  renderTent(project);
+  if (state.route.job) showJob(state.route.job);
 }
 
 function fingerprint(data) {
@@ -595,7 +608,12 @@ document.addEventListener('click', (event) => {
     return;
   }
   const noteButton = event.target.closest('[data-job]');
-  if (noteButton) { showJob(noteButton.dataset.job); return; }
+  if (noteButton) {
+    const name = state.route.name;
+    if (name) location.hash = `#/legion/${enc(name)}/job/${enc(noteButton.dataset.job)}`;
+    else showJob(noteButton.dataset.job);
+    return;
+  }
   const roleButton = event.target.closest('[data-role-detail]');
   if (roleButton) showRole(roleButton.dataset.roleDetail);
 });

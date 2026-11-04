@@ -440,12 +440,12 @@ a { color: inherit; }
 
 .tent-layout {
   position: absolute;
-  inset: 74px 0 88px 0;
+  inset: 78px 0 94px 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: minmax(0, 68%) minmax(0, 32%);
-  gap: 0;
-  padding: 0 1.6%;
+  grid-template-columns: minmax(0, 55%) minmax(0, 45%);
+  gap: 1%;
+  padding: 0 2.2%;
 }
 
 .board-wrap {
@@ -453,7 +453,7 @@ a { color: inherit; }
   align-self: center;
   justify-self: center;
   width: 100%;
-  max-width: min(74vw, 1200px);
+  max-width: min(62vw, 1020px);
   max-height: 100%;
   aspect-ratio: 1331 / 1072;
 }
@@ -721,8 +721,8 @@ a { color: inherit; }
 .worker {
   position: relative;
   z-index: 2;
-  height: 92%;
-  max-height: 680px;
+  height: 98%;
+  max-height: 760px;
   width: auto;
   max-width: 100%;
   object-fit: contain;
@@ -780,8 +780,8 @@ a { color: inherit; }
 }
 
 .quiet .desk {
-  height: 62%;
-  max-height: 400px;
+  height: 74%;
+  max-height: 470px;
   width: auto;
   object-fit: contain;
   filter: drop-shadow(0 16px 16px rgba(60, 40, 20, 0.28));
@@ -989,6 +989,38 @@ a { color: inherit; }
   border-radius: 22px;
   background: var(--paper);
   box-shadow: 0 10px 0 rgba(93, 58, 46, 0.16), 0 30px 60px rgba(0, 0, 0, 0.25);
+}
+
+.modal-card.wide { width: min(940px, 95vw); }
+
+.job-panel .modal-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.job-kicker {
+  margin: 0 0 2px;
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--brick);
+}
+
+.job-panel .modal-title { font-size: clamp(20px, 2.2vw, 28px); }
+
+.job-panel .modal-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.job-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1.5px dashed rgba(93, 58, 46, 0.28);
+}
+
+.job-id {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
 }
 
 .modal-close {
