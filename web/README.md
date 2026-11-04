@@ -40,8 +40,9 @@ Notes are clickable: a wide job panel opens with the stage, round, gate, PR,
 cost, what waits on a human and the review verdicts, and it has a deep link
 (`#/legion/<name>/job/<id>`). The cast chips are clickable (role duty), and
 `M` / `L` / `N` / `Esc` open the cast, the legions, the waiting list and close a
-panel. The job panel is drawn from the same CSS parchment palette — no extra
-art is needed for it.
+panel. If a lane holds more notes than fit, it scrolls and grows a `+N more`
+pill that opens the whole lane in the same wide panel. Both panels are drawn
+from the same CSS parchment palette — no extra art is needed for them.
 
 ## Data (read-only, by construction)
 

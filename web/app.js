@@ -312,10 +312,47 @@ function renderTent(project) {
     ${helpButton()}
     ${state.data.demo ? '<span class="demo-badge">DEMO · fake data</span>' : ''}
   </div>`;
+  requestAnimationFrame(() => annotateLaneOverflow(project));
+}
+
+const LANE_LABEL = { todo: 'AD FACIENDUM', doing: 'IN CURSU', done: 'FACTUM' };
+
+function laneJobs(project, kind) {
+  return (project.jobs || []).filter((job) => (kind === 'done' ? job.terminal
+    : kind === 'todo' ? job.waiting : !job.terminal && !job.waiting));
+}
+
+function annotateLaneOverflow(project) {
+  $$('.lane').forEach((laneEl) => {
+    const notes = laneEl.querySelector('.notes');
+    if (!notes) return;
+    const hidden = Array.from(notes.children).filter((child) =>
+      child.offsetTop + child.offsetHeight > notes.clientHeight + 4).length;
+    if (!hidden || notes.scrollHeight <= notes.clientHeight + 4) return;
+    laneEl.classList.add('overflowing');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'lane-more';
+    button.textContent = `+${hidden} more`;
+    button.addEventListener('click', () => showLane(project, laneEl.dataset.lane));
+    laneEl.appendChild(button);
+  });
+}
+
+function showLane(project, kind) {
+  const jobs = laneJobs(project, kind);
+  openModal(`<p class="job-kicker">TABULA · ${esc(project.name)} · ${LANE_LABEL[kind]}</p>
+    <h2 class="modal-title">${LANE_LABEL[kind]} · ${jobs.length} job${jobs.length === 1 ? '' : 's'}</h2>
+    <ul class="modal-list lane-list">
+      ${jobs.map((job) => `<li><a href="#/legion/${enc(project.name)}/job/${enc(job.id)}">
+        <b>${esc(job.title)}</b>
+        <span>${esc(job.id.split('-')[0])} · r${esc(job.round ?? 0)}/${esc(job.round_limit ?? 3)}${
+  job.gate ? ` · gate ${esc(job.gate)}` : ''}</span></a></li>`).join('')}
+    </ul>`, true);
 }
 
 function lane(kind, jobs, workingIds) {
-  return `<div class="lane lane-${kind}">
+  return `<div class="lane lane-${kind}" data-lane="${kind}">
     <div class="notes">${jobs.length
     ? jobs.map((job) => note(job, workingIds.has(job.id))).join('')
     : '<span class="lane-empty">nothing here</span>'}</div>

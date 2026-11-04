@@ -520,11 +520,39 @@ a { color: inherit; }
 }
 
 .lane {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
   padding: 1px 2px 0;
 }
+
+.lane.overflowing .notes {
+  mask-image: linear-gradient(to bottom, #000 86%, transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 86%, transparent);
+}
+
+.lane-more {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 2px 9px;
+  border: 1.5px solid rgba(93, 58, 46, 0.42);
+  border-radius: 999px;
+  background: rgba(255, 246, 231, 0.96);
+  color: var(--brick);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(93, 58, 46, 0.12);
+}
+
+.lane-more:hover { background: var(--cream); transform: translateX(-50%) translateY(-1px); }
+
+.lane-list a { align-items: center; }
 
 .notes {
   width: 100%;
