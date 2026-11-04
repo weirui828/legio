@@ -440,12 +440,12 @@ a { color: inherit; }
 
 .tent-layout {
   position: absolute;
-  inset: 86px 0 118px 0;
+  inset: 74px 0 88px 0;
   z-index: 10;
   display: grid;
-  grid-template-columns: minmax(0, 57%) minmax(0, 43%);
-  gap: 0.5%;
-  padding: 0 3%;
+  grid-template-columns: minmax(0, 68%) minmax(0, 32%);
+  gap: 0;
+  padding: 0 1.6%;
 }
 
 .board-wrap {
@@ -453,7 +453,7 @@ a { color: inherit; }
   align-self: center;
   justify-self: center;
   width: 100%;
-  max-width: 850px;
+  max-width: min(74vw, 1200px);
   max-height: 100%;
   aspect-ratio: 1331 / 1072;
 }
@@ -477,7 +477,7 @@ a { color: inherit; }
   place-items: center;
   font-family: var(--font-display);
   font-weight: 700;
-  font-size: clamp(10px, 1.2vw, 17px);
+  font-size: clamp(13px, 1.45vw, 21px);
   letter-spacing: 0.2em;
   color: var(--brick);
   text-shadow: 0 1px 0 rgba(255, 246, 231, 0.7);
@@ -500,7 +500,7 @@ a { color: inherit; }
   border-radius: 5px;
   background: rgba(252, 238, 217, 0.72);
   font-family: var(--font-display);
-  font-size: clamp(7.5px, 0.78vw, 11px);
+  font-size: clamp(8.5px, 0.95vw, 14px);
   font-weight: 700;
   letter-spacing: 0.11em;
   color: var(--brick);
@@ -545,19 +545,18 @@ a { color: inherit; }
   position: relative;
   flex: none;
   display: block;
-  width: 92%;
-  aspect-ratio: 396 / 400;
+  width: 82%;
+  aspect-ratio: 1 / 1;
   border: 0;
   margin: 0;
-  padding: 20% 14% 9%;
+  padding: 17% 10% 7%;
   background: url("assets/note.webp") center / 100% 100% no-repeat;
   color: var(--ink);
   text-align: left;
   cursor: pointer;
   transform: rotate(var(--rot, 0deg));
-  filter: drop-shadow(0 3px 3px rgba(60, 40, 20, 0.25));
-  transition: transform 0.15s ease;
-  overflow: hidden;
+  filter: drop-shadow(0 3px 3px rgba(60, 40, 20, 0.24));
+  transition: transform 0.15s ease, filter 0.15s ease;
 }
 
 .note:nth-child(3n) { --rot: -1.1deg; }
@@ -566,6 +565,7 @@ a { color: inherit; }
 
 .note:hover, .note:focus-visible {
   transform: rotate(0deg) scale(1.03);
+  filter: drop-shadow(0 5px 6px rgba(60, 40, 20, 0.3));
   outline: 2px dashed rgba(193, 88, 80, 0.55);
   outline-offset: 3px;
 }
@@ -576,16 +576,16 @@ a { color: inherit; }
   -webkit-box-orient: vertical;
   overflow: hidden;
   font-family: var(--font-display);
-  font-size: clamp(8.5px, 0.78vw, 11px);
+  font-size: clamp(10px, 1.02vw, 15px);
   font-weight: 600;
-  line-height: 1.14;
+  line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
 .note-meta {
   display: block;
   margin-top: 3px;
-  font-size: clamp(6.5px, 0.6vw, 8.5px);
+  font-size: clamp(7.5px, 0.74vw, 11px);
   letter-spacing: 0.03em;
   color: var(--ink-2);
 }
@@ -599,7 +599,7 @@ a { color: inherit; }
 
 .mark {
   font-style: normal;
-  font-size: clamp(5.5px, 0.54vw, 7.5px);
+  font-size: clamp(6.5px, 0.68vw, 9.5px);
   font-weight: 700;
   letter-spacing: 0.03em;
   padding: 0 3px;
@@ -669,7 +669,7 @@ a { color: inherit; }
   position: absolute;
   right: 8%;
   bottom: 5%;
-  font-size: clamp(6px, 0.56vw, 8px);
+  font-size: clamp(7px, 0.7vw, 10px);
   font-weight: 700;
   color: var(--brick);
 }
@@ -721,8 +721,8 @@ a { color: inherit; }
 .worker {
   position: relative;
   z-index: 2;
-  height: 94%;
-  max-height: 620px;
+  height: 92%;
+  max-height: 680px;
   width: auto;
   max-width: 100%;
   object-fit: contain;
@@ -751,7 +751,7 @@ a { color: inherit; }
   border: 2px solid var(--ink);
   border-radius: 15px;
   background: var(--cream);
-  font-size: clamp(10px, 0.92vw, 13.5px);
+  font-size: clamp(11px, 1vw, 15px);
   line-height: 1.3;
   box-shadow: 0 4px 0 rgba(93, 58, 46, 0.16);
   transform: rotate(-1deg);
