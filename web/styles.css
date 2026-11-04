@@ -562,12 +562,11 @@ a { color: inherit; }
   align-items: center;
   overflow-y: auto;
   padding: 10px 0 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(93, 58, 46, 0.35) transparent;
+  scrollbar-width: none;          /* the fade + "+N more" are the affordance */
+  -ms-overflow-style: none;
 }
 
-.notes::-webkit-scrollbar { width: 5px; }
-.notes::-webkit-scrollbar-thumb { background: rgba(93, 58, 46, 0.35); border-radius: 4px; }
+.notes::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 .note {
   position: relative;
@@ -884,7 +883,10 @@ a { color: inherit; }
   backdrop-filter: blur(2px);
   max-width: 92vw;
   overflow-x: auto;
+  scrollbar-width: none;
 }
+
+.cast-strip::-webkit-scrollbar { display: none; }
 
 .chip {
   display: flex;
@@ -1045,6 +1047,8 @@ a { color: inherit; }
   width: min(580px, 94vw);
   max-height: 82vh;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(93, 58, 46, 0.35) transparent;
   padding: 22px 24px 20px;
   border: 2.5px solid var(--ink);
   border-radius: 22px;
