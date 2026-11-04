@@ -97,8 +97,9 @@ python3 web/tools/prepare_assets.py      # needs Pillow + numpy
 ```
 
 That script trims transparent padding, cuts the flat-white backgrounds out of
-the desk/soldier/icon sheets, slices the sheets, resizes each sprite to 2x its
-CSS size and writes the manifest. The art direction (and the prompts that made
+the desk/soldier/icon sheets (with a soft, de-fringed edge — no white halo),
+slices the sheets, resizes each sprite to 2x its CSS size and writes the
+manifest. The art direction (and the prompts that made
 it) lives in `docs/ui/assets.md`; the two style references are in
 `docs/ui/reference/`. Missing assets are not faked: the app simply renders
 broken images, so commit the output of the script when it changes.

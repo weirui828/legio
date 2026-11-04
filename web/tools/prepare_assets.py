@@ -72,27 +72,55 @@ def scale_to_height(im: Image.Image, height: int | None, width: int | None = Non
     return im.resize((w, height), Image.LANCZOS)
 
 
-def cut_white(im: Image.Image, tol: int = 12) -> Image.Image:
-    """Turn a flat-white background into transparency.
+def cut_white(im: Image.Image, tol: int = 14, band_px: int = 5,
+              softness: float = 36.0) -> Image.Image:
+    """Turn a flat-white background into transparency, without a white fringe.
 
-    Flood-fills from the border with a tolerance so anti-aliased edges are
-    included; enclosed light areas (parchment, armour) are left alone.
+    Flood-fills from the border (tolerance ``tol``), then treats the two or
+    three anti-aliased pixels next to that background as a soft edge: their
+    alpha comes from how far they are from white, and the white that was mixed
+    into them is subtracted back out (un-premultiplied). Without this the desk
+    keeps a visible 1-2px white outline on a cream floor.
     """
-    im = im.convert("RGB")
-    work = im.copy()
-    marker = (1, 2, 3)
-    h, w = work.height, work.width
-    seeds = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
-    for seed in seeds:
-        if work.getpixel(seed) != marker:
-            ImageDraw.floodfill(work, seed, marker, thresh=tol)
     import numpy as np
-    arr = np.asarray(work)
-    mask = Image.fromarray(
-        np.where((arr == marker).all(axis=2), 0, 255).astype("uint8"))
-    out = im.convert("RGBA")
-    out.putalpha(mask)
-    return out
+    from PIL import ImageFilter
+
+    rgb = im.convert("RGB")
+    arr = np.asarray(rgb).astype(np.float32)
+    height, width = arr.shape[:2]
+    distance = 255.0 - arr.min(axis=2)
+
+    work = rgb.copy()
+    marker = (1, 2, 3)
+    for seed in ((0, 0), (width - 1, 0), (0, height - 1),
+                 (width - 1, height - 1)):
+        if work.getpixel(seed) == marker:
+            continue
+        ImageDraw.floodfill(work, seed, marker, thresh=tol)
+    background = (np.asarray(work) == marker).all(axis=2)
+
+    grown = Image.fromarray((background * 255).astype(np.uint8)).filter(
+        ImageFilter.MaxFilter(band_px * 2 + 1))
+    band = (np.asarray(grown) > 0) & ~background
+
+    alpha = np.where(background, 0.0, 255.0).astype(np.float32)
+    smooth = np.clip(distance / softness, 0, 1) ** 0.85 * 255.0
+    alpha[band] = np.minimum(alpha[band], smooth[band])
+    alpha[background] = 0.0
+
+    coverage = np.clip(alpha / 255.0, 0, 1)
+    out = arr.copy()
+    for channel in range(3):
+        out[..., channel] = np.where(
+            band,
+            np.clip((arr[..., channel] - (1 - coverage) * 255.0)
+                    / np.maximum(coverage, 0.02), 0, 255),
+            arr[..., channel])
+
+    result = Image.fromarray(
+        np.dstack([out, alpha[..., None]]).astype(np.uint8), "RGBA")
+    result.putalpha(result.getchannel("A").filter(ImageFilter.GaussianBlur(0.5)))
+    return result
 
 
 def save(im: Image.Image, name: str, quality: int = 86) -> dict:

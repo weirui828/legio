@@ -46,7 +46,7 @@
   },
   "desk": {
     "file": "desk.webp",
-    "w": 496,
+    "w": 497,
     "h": 460
   },
   "seal": {
@@ -191,7 +191,7 @@
   },
   "icon-nuntii": {
     "file": "icon-nuntii.webp",
-    "w": 59,
+    "w": 58,
     "h": 56
   },
   "icon-bell": {
@@ -211,7 +211,7 @@
   },
   "icon-level": {
     "file": "icon-level.webp",
-    "w": 121,
+    "w": 119,
     "h": 56
   },
   "_meta": {
