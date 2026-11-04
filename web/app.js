@@ -40,7 +40,7 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const app = $('#app');
 const modal = $('#modal');
 
-const state = { data: null, fingerprint: '', route: { view: 'camp' } };
+const state = { data: null, fingerprint: '', route: { view: 'camp' }, scrolls: null };
 
 /* ------------------------------------------------------------------ utils */
 
@@ -515,6 +515,8 @@ function openModal(html, wide = false) {
 function closeModal() {
   modal.hidden = true;
   $('.modal-body').innerHTML = '';
+  $('.modal-card').classList.remove('wide', 'scrolls');
+  state.scrolls = null;
 }
 
 function showLegions() {
@@ -579,9 +581,80 @@ function showJob(jobId) {
   reviews.map(([role, verdict]) => `<li><b>${esc(role)}</b><span>${esc(verdict)}</span></li>`).join('')}</ul>` : ''}
     <div class="job-foot">
       <a class="modal-link" href="#/legion/${enc(project.name)}">← back to the tent</a>
+      <a class="btn-scrolls" href="#/legion/${enc(project.name)}/job/${enc(job.id)}/scrolls">
+        read the scrolls →</a>
       <span class="job-id">${esc(job.id)}</span>
     </div>
   </div>`, true);
+}
+
+function fmtSize(size) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function renderScrollsPage(project, job) {
+  state.scrolls = { project: project.name, job: job.id, path: null };
+  app.innerHTML = `<div class="scrolls-page">
+    <div class="tent-bg" role="presentation"></div>
+    ${chrome({ active: 'castra', project })}
+    <a class="back" href="#/legion/${enc(project.name)}">← back to the tent</a>
+    <h1 class="scrolls-title">SCROLLS <span>· ${esc(project.name)} · ${esc(job.id)}</span></h1>
+    <div class="scrolls" id="scrolls">
+      <p class="scrolls-loading">unrolling the scrolls…</p>
+    </div>
+  </div>`;
+  try {
+    const response = await fetch(`/api/job?project=${enc(project.name)}&job=${enc(job.id)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || `HTTP ${response.status}`);
+    renderScrolls(data.files || [], job);
+  } catch (error) {
+    $('#scrolls').innerHTML = `<p class="scrolls-loading">could not unroll: ${esc(error.message)}</p>`;
+  }
+}
+
+function renderScrolls(files, job) {
+  const host = $('#scrolls');
+  if (!files.length) {
+    host.innerHTML = '<p class="scrolls-loading">no scrolls were left behind for this job yet.</p>';
+    return;
+  }
+  host.innerHTML = `<aside class="scrolls-list">
+      ${files.map((file) => `<button type="button"
+        class="scroll-file ${file.kind === 'log' ? 'is-log' : ''}"
+        data-artifact="${esc(file.path)}"><span>${esc(file.path)}</span>
+        <i>${fmtSize(file.size)}</i></button>`).join('')}
+    </aside>
+    <section class="scrolls-view">
+      <pre class="scroll-text" id="scroll-text">choose a scroll…</pre>
+    </section>`;
+  const preferred = files.find((file) => file.path === 'spec.md')
+    || files.find((file) => file.path === 'build.md')
+    || files[0];
+  loadScroll(preferred.path);
+}
+
+async function loadScroll(path) {
+  const scrolls = state.scrolls;
+  if (!scrolls) return;
+  scrolls.path = path;
+  $$('.scroll-file').forEach((element) => {
+    element.classList.toggle('active', element.dataset.artifact === path);
+  });
+  const pre = $('#scroll-text');
+  if (!pre) return;
+  pre.textContent = 'unrolling…';
+  try {
+    const response = await fetch(`/api/job/file?project=${enc(scrolls.project)}`
+      + `&job=${enc(scrolls.job)}&path=${enc(path)}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || `HTTP ${response.status}`);
+    pre.textContent = data.text;
+  } catch (error) {
+    pre.textContent = `could not read ${path}: ${error.message}`;
+  }
 }
 
 function showRole(role) {
@@ -601,6 +674,8 @@ function parseRoute() {
   if (!raw || raw === '/') return { view: 'camp' };
   let match = raw.match(/^\/legion\/([^/]+)\/cast$/);
   if (match) return { view: 'cast', name: match[1] };
+  match = raw.match(/^\/legion\/([^/]+)\/job\/([^/]+)\/scrolls$/);
+  if (match) return { view: 'scrolls', name: match[1], job: match[2] };
   match = raw.match(/^\/legion\/([^/]+)\/job\/([^/]+)$/);
   if (match) return { view: 'tent', name: match[1], job: match[2] };
   match = raw.match(/^\/legion\/([^/]+)$/);
@@ -620,6 +695,12 @@ function render() {
   if (!project.ok) { renderTentError(project); return; }
   if (state.route.view === 'cast') {
     renderCast(project);
+    return;
+  }
+  if (state.route.view === 'scrolls') {
+    const job = (project.jobs || []).find((entry) => entry.id === state.route.job);
+    if (job) renderScrollsPage(project, job);
+    else location.hash = `#/legion/${enc(project.name)}`;
     return;
   }
   renderTent(project);
@@ -681,6 +762,8 @@ document.addEventListener('click', (event) => {
     closeModal();
     return;
   }
+  const scrollFile = event.target.closest('[data-artifact]');
+  if (scrollFile) { loadScroll(scrollFile.dataset.artifact); return; }
   const noteButton = event.target.closest('[data-job]');
   if (noteButton) {
     const name = state.route.name;

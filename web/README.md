@@ -42,11 +42,27 @@ from their role file; the one on duty is ringed in brass.
 
 Notes are clickable: a wide job panel opens with the stage, round, gate, PR,
 cost, what waits on a human and the review verdicts, and it has a deep link
-(`#/legion/<name>/job/<id>`). The cast chips are clickable (role duty), and
+(`#/legion/<name>/job/<id>`). From there, **read the scrolls** opens
+(`#/legion/<name>/job/<id>/scrolls`): the job's issue, intake, spec, build,
+gate checks, every review and the agent logs, side by side in a reading pane. The cast chips are clickable (role duty), and
 `M` / `L` / `N` / `Esc` open the cast, the legions, the waiting list and close a
 panel. If a lane holds more notes than fit, it scrolls and grows a `+N more`
 pill that opens the whole lane in the same wide panel. Both panels are drawn
 from the same CSS parchment palette — no extra art is needed for them.
+
+## Scrolls (the job's own files)
+
+The scrolls page reads the job folder under `.centuria/jobs/<id>/`, but only a
+whitelist: `issue.md`, `intake.md`, `spec.md`, `build.md`, `decision.md`,
+`rejection.md`, `feedback-*.md`, `round-*/checks.md`, `round-*/review-*.md` and
+`agent-*-*.log`. `job.json` and anything else are not exposed. Markdown is
+capped at 96 KB, a log comes back as its last 64 KB (flagged as truncated); the
+whole thing is a plain `textContent` render, never HTML.
+
+There are two read-only endpoints behind it: `GET /api/job?project=&job=`
+(listing) and `GET /api/job/file?project=&job=&path=` (one file). Both refuse
+anything outside the whitelist and anything that resolves outside the job
+folder, and `--demo` serves a small synthetic set.
 
 ## Data (read-only, by construction)
 
@@ -127,5 +143,5 @@ missing job folder is harmless).
 
 ## Screenshots
 
-`docs/camp.jpg`, `docs/tent.jpg`, `docs/cast.jpg`, `docs/quiet.jpg` and
-`docs/job.jpg` were taken from `--demo` mode at 1440x900.
+`docs/camp.jpg`, `docs/tent.jpg`, `docs/cast.jpg`, `docs/quiet.jpg`,
+`docs/job.jpg` and `docs/scrolls.jpg` were taken from `--demo` mode at 1440x900.

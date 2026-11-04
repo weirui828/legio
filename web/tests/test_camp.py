@@ -184,6 +184,15 @@ class Http(Fixture):
         super().setUp()
         self.project("alpha")
         self.project("broken", fail=True)
+        job = self.root / "alpha" / ".centuria" / "jobs" / "001-example"
+        (job / "round-1").mkdir(parents=True)
+        (job / "spec.md").write_text("SPEC: READY\n\n- do the thing\n")
+        (job / "build.md").write_text("STATUS: READY\n")
+        (job / "round-1" / "checks.md").write_text("GATE: PASS\n")
+        (job / "agent-1-fabri.log").write_text("$ run\n--- stdout ---\nok\n")
+        (job / "job.json").write_text("{}")
+        big = job / "agent-2-fabri.log"
+        big.write_text("x" * 80_000 + "\nTHE TAIL\n")
         self.httpd = SERVE.build_server(0, demo=False, root=str(self.root))
         self.port = self.httpd.server_port
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -221,10 +230,55 @@ class Http(Fixture):
             self.assertEqual(status, 200, path)
             self.assertTrue(actual.startswith(ctype), (path, actual))
 
+    def test_scrolls_are_listed_and_read(self):
+        status, _, body = self.request("/api/job?project=alpha&job=001-example")
+        self.assertEqual(status, 200)
+        listing = json.loads(body)
+        paths = [item["path"] for item in listing["files"]]
+        self.assertIn("spec.md", paths)
+        self.assertIn("round-1/checks.md", paths)
+        self.assertIn("agent-1-fabri.log", paths)
+        self.assertNotIn("job.json", paths)
+
+        status, _, body = self.request(
+            "/api/job/file?project=alpha&job=001-example&path=spec.md")
+        self.assertEqual(status, 200)
+        self.assertIn("SPEC: READY", json.loads(body)["text"])
+
+    def test_big_logs_come_back_as_a_tail(self):
+        status, _, body = self.request(
+            "/api/job/file?project=alpha&job=001-example&path=agent-2-fabri.log")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["truncated"])
+        self.assertIn("THE TAIL", payload["text"])
+        self.assertLess(len(payload["text"]), 70_000)
+
+    def test_scroll_paths_are_whitelisted(self):
+        for path in ("job.json", "../job.json", "round-1/../../job.json",
+                     "agent-9-ghost.log"):
+            status, _, _ = self.request(
+                f"/api/job/file?project=alpha&job=001-example&path={path}")
+            self.assertEqual(status, 404, path)
+        for query, expected in (("project=alpha&job=nope", 404),
+                                ("project=nope&job=001-example", 404),
+                                ("project=alpha", 400),
+                                ("job=001-example", 400)):
+            status, _, _ = self.request(f"/api/job?{query}")
+            self.assertEqual(status, expected, query)
+
     def test_writes_are_refused(self):
         for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
             status, _, _ = self.request("/api/camp", method)
             self.assertEqual(status, 405, method)
+
+    def test_demo_scrolls(self):
+        payload = SERVE.demo_job_payload("legio", "004-camp-ui")
+        paths = [item["path"] for item in payload["files"]]
+        self.assertIn("spec.md", paths)
+        self.assertIn("agent-1-fabri.log", paths)
+        with self.assertRaises(LookupError):
+            SERVE.demo_job_payload("legio", "nope")
 
     def test_path_traversal_is_refused(self):
         for path in ("/../serve.py", "/..%2Fserve.py", "/assets/../../serve.py"):

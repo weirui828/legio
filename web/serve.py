@@ -13,6 +13,7 @@ Standard library only; the only thing it shells out to is `centuria view`.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
@@ -100,6 +101,95 @@ def parse_cast(centuria: Path) -> list[dict]:
     out.sort(key=lambda entry: (ROLE_ORDER.index(entry["role"])
                                if entry["role"] in ROLE_ORDER else 99))
     return out
+
+
+# ---- job artifacts (read-only scrolls) -------------------------------------
+
+ARTIFACT_CAP = {"md": 96_000, "log": 64_000}
+ARTIFACT_MAIN = ("issue.md", "intake.md", "spec.md", "build.md", "decision.md",
+                 "rejection.md")
+
+
+def allowed_artifact(rel: str) -> bool:
+    if rel in ARTIFACT_MAIN:
+        return True
+    for pattern in ("feedback-*.md", "round-*/checks.md", "round-*/review-*.md",
+                    "agent-*-*.log"):
+        if fnmatch.fnmatch(rel, pattern):
+            return True
+    return False
+
+
+def resolve_job_dir(root: str | None, name: str, job: str) -> Path:
+    base = projects_root(root)
+    project = None
+    if base.is_dir():
+        for config in sorted(base.glob("*/.centuria/config.json")):
+            if config.parent.parent.name == name:
+                project = config.parent.parent
+                break
+    if project is None:
+        raise LookupError("unknown project")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", job or ""):
+        raise LookupError("invalid job id")
+    job_dir = project / ".centuria" / "jobs" / job
+    if not job_dir.is_dir():
+        raise LookupError("unknown job")
+    return job_dir
+
+
+def artifact_sort(rel: str) -> tuple:
+    if rel in ARTIFACT_MAIN:
+        return (0, ARTIFACT_MAIN.index(rel), rel)
+    if rel.endswith(".log"):
+        return (3, 0, rel)
+    if rel.startswith("round-"):
+        return (2, 0, rel)
+    return (1, 0, rel)
+
+
+def list_artifacts(job_dir: Path) -> list[dict]:
+    files = []
+    for path in job_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(job_dir).as_posix()
+        if not allowed_artifact(rel):
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        files.append({"path": rel, "size": size,
+                      "kind": "log" if rel.endswith(".log") else "artifact"})
+    files.sort(key=lambda item: artifact_sort(item["path"]))
+    return files
+
+
+def read_artifact(job_dir: Path, rel: str) -> dict:
+    if not allowed_artifact(rel):
+        raise LookupError("not a scroll")
+    path = (job_dir / rel).resolve()
+    try:
+        path.relative_to(job_dir.resolve())
+    except ValueError:
+        raise LookupError("not a scroll") from None
+    if not path.is_file():
+        raise LookupError("no such scroll")
+    data = path.read_bytes()
+    total = len(data)
+    cap = ARTIFACT_CAP["log"] if rel.endswith(".log") else ARTIFACT_CAP["md"]
+    truncated = total > cap
+    if truncated:
+        if rel.endswith(".log"):
+            data = data[-cap:]
+            header = (f"… showing the last {cap // 1024} KB of a "
+                      f"{total // 1024} KB log …\n\n").encode()
+            data = header + data
+        else:
+            data = data[:cap]
+    text = data.decode("utf-8", errors="replace")
+    return {"path": rel, "size": total, "truncated": truncated, "text": text}
 
 
 def read_jobs(project: Path) -> list[dict]:
@@ -280,6 +370,31 @@ def demo_camp() -> dict:
     }
 
 
+DEMO_SCROLLS = {
+    "004-camp-ui": {
+        "issue.md": "# Issue #6: Camp Legio\n\nA local dashboard for the centuriae.\n",
+        "spec.md": "SPEC: READY\n\n## Summary\n- Serve the camp as one page.\n"
+                   "- Show one tent per project.\n- Put the working role at the desk.\n",
+        "build.md": "STATUS: READY\n\n## Work completed\n- camp scene, board, cast.\n"
+                    "- stdlib server, read-only.\n",
+        "round-1/checks.md": "GATE: PASS\n\npython3 -m unittest discover -s web/tests\n"
+                             "Ran 15 tests ... OK\n",
+        "round-1/review-probator.md": "VERDICT: PASS\n\nIn scope and tested.\n",
+        "agent-1-fabri.log": "$ codex exec ...\n--- stdout ---\nwrote web/, 43 assets, 15 tests\n",
+    },
+}
+
+
+def demo_job_payload(name: str, job: str) -> dict:
+    if job not in DEMO_SCROLLS:
+        raise LookupError("unknown job")
+    files = [{"path": rel, "size": len(text.encode()),
+              "kind": "log" if rel.endswith(".log") else "artifact"}
+             for rel, text in sorted(DEMO_SCROLLS[job].items(),
+                                     key=lambda item: artifact_sort(item[0]))]
+    return {"project": name, "job": job, "files": files}
+
+
 # ---- http ------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -298,6 +413,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         target = urlsplit(self.path)
+        if target.path in ("/api/job", "/api/job/file"):
+            self.serve_scroll(target)
+            return
         if target.path == "/api/camp":
             try:
                 data = demo_camp() if self.server.demo else real_camp(self.server.root)
@@ -321,6 +439,45 @@ class Handler(BaseHTTPRequestHandler):
             return
         ctype = TYPES.get(candidate.suffix.lower(), "application/octet-stream")
         self.reply(200, candidate.read_bytes(), ctype)
+
+    def serve_scroll(self, target):
+        from urllib.parse import parse_qsl
+        query = dict(parse_qsl(target.query, keep_blank_values=True))
+        name = query.get("project", "")
+        job = query.get("job", "")
+        if not name or not job:
+            self.reply(400, json.dumps({"error": {
+                "code": "bad_query", "message": "project and job are required"}}).encode(),
+                "application/json")
+            return
+        try:
+            if self.server.demo:
+                payload = demo_job_payload(name, job)
+                if target.path == "/api/job/file":
+                    rel = query.get("path", "")
+                    text = DEMO_SCROLLS[job].get(rel)
+                    if text is None:
+                        raise LookupError("no such scroll")
+                    payload = {"path": rel, "size": len(text.encode()),
+                               "truncated": False, "text": text}
+            else:
+                job_dir = resolve_job_dir(self.server.root, name, job)
+                if target.path == "/api/job":
+                    payload = {"project": name, "job": job,
+                               "files": list_artifacts(job_dir)}
+                else:
+                    payload = read_artifact(job_dir, query.get("path", ""))
+        except LookupError as exc:
+            self.reply(404, json.dumps({"error": {
+                "code": "not_found", "message": str(exc)}}).encode(),
+                "application/json")
+            return
+        except OSError as exc:
+            self.reply(502, json.dumps({"error": {
+                "code": "scroll_read_failed", "message": str(exc)}}).encode(),
+                "application/json")
+            return
+        self.reply(200, json.dumps(payload).encode(), "application/json")
 
     def do_HEAD(self):
         self.do_GET()
