@@ -1,0 +1,147 @@
+# Camp Legio — the dashboard
+
+A local, read-only webapp for legio's centuriae, drawn as a Roman camp. One tent
+per project; inside a tent, the **TABULA OPERUM** board with its jobs and the
+role that is working right now. Everything is generated art, nothing is fetched
+from the network, and the app never writes to a project.
+
+```bash
+python3 web/serve.py            # http://127.0.0.1:8766 — the real camp
+python3 web/serve.py --demo     # a fake camp (four projects), for design work
+python3 web/serve.py --port 9000 --root ~/dev
+```
+
+Stop with Ctrl-C. There is no build step and no dependency: Python's standard
+library serves the page and shells out to `centuria view` for the data.
+
+## What you see
+
+**CASTRA — the camp.** One illustrated scene, one tent per project. The banner
+over a tent is `LEGIO <n> · <project>` plus counts (`active / waiting / done`);
+a project whose `centuria view` failed gets the warped tent and a red "cannot
+read" tag instead of pretending to be healthy. The top row is the nav:
+CASTRA (the camp), MILITES (this project's cast — only inside a tent),
+LEGIONES (every project), NUNTII (what waits on you). Top right: the operator,
+the recorded cost in denarii, and a STATUS meter for "how many projects read
+cleanly". Bottom left: notifications. Bottom right: HELP.
+
+**A tent.** Cream canvas, a wooden floor and the **TABULA OPERUM**:
+`AD FACIENDUM` (waiting on a human), `IN CURSU` (being worked), `FACTUM`
+(finished — merged or rejected). One pinned note per job, and the note carries
+the **cast faces** of that job: the role of the current stage, the reviewers
+from its roster and whoever reviewed it — a green or red ring is their verdict,
+a brass ring means that role is working on it right now (hover a face for its
+title and duty). The right side is the
+desk: if a role is working right now, that role's chibi sits there with the job
+name in a bubble, warm glow and floating hearts. If nobody is working, the desk
+is empty and says so. The strip at the bottom is the cast; the on-duty role is
+lit.
+
+**MILITES.** The eight roles with their name, function, tier and the duty line
+from their role file; the one on duty is ringed in brass.
+
+Notes are clickable: a wide job panel opens with the stage, round, gate, PR,
+cost, what waits on a human and the review verdicts, and it has a deep link
+(`#/legion/<name>/job/<id>`). From there, **read the scrolls** opens
+(`#/legion/<name>/job/<id>/scrolls`): the job's issue, intake, spec, build,
+gate checks, every review and the agent logs, side by side in a reading pane. The cast chips are clickable (role duty), and
+`M` / `L` / `N` / `Esc` open the cast, the legions, the waiting list and close a
+panel. If a lane holds more notes than fit, it scrolls and grows a `+N more`
+pill that opens the whole lane in the same wide panel. Both panels are drawn
+from the same CSS parchment palette — no extra art is needed for them.
+
+## Scrolls (the job's own files)
+
+The scrolls page reads the job folder under `.centuria/jobs/<id>/`, but only a
+whitelist: `issue.md`, `intake.md`, `spec.md`, `build.md`, `decision.md`,
+`rejection.md`, `feedback-*.md`, `round-*/checks.md`, `round-*/review-*.md` and
+`agent-*-*.log`. `job.json` and anything else are not exposed. Markdown is
+capped at 96 KB, a log comes back as its last 64 KB (flagged as truncated); the
+whole thing is a plain `textContent` render, never HTML.
+
+There are two read-only endpoints behind it: `GET /api/job?project=&job=`
+(listing) and `GET /api/job/file?project=&job=&path=` (one file). Both refuse
+anything outside the whitelist and anything that resolves outside the job
+folder, and `--demo` serves a small synthetic set.
+
+## Data (read-only, by construction)
+
+`serve.py` discovers `*/​.centuria/config.json` under `projects_root` (from
+legio's `config.json`, or `--root`), then for each project:
+
+- runs `.centuria/bin/centuria view` (5s timeout) and keep only
+  `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster,
+  cost_usd, active, waiting, terminal, human_reason` — no worktree paths,
+  prompts, logs, config or secrets reach the browser;
+- reads every `.centuria/jobs/*/live.json` for "who is at the desk" (concurrency
+  can be more than one, so several jobs can be working at once);
+- parses `.centuria/roles/*.md` (frontmatter + first blockquote) for the cast.
+
+`GET /api/camp` is the only endpoint; every other method is 405. There are no
+write endpoints and no agent calls.
+
+### The heartbeat
+
+`centuria/bin/run` writes `.centuria/jobs/<id>/live.json` immediately before it
+spawns an agent and deletes it when the agent exits:
+
+```json
+{"roles": ["fabri"], "round": 1, "started": "2026-11-03T18:00:00Z", "pid": 12345}
+```
+
+Parallel reviewers list several roles, and **two jobs can run at the same time**
+(concurrency 2): each job writes its own `live.json`, so the tent shows the
+freshest one at the desk, a small "also at work" panel for the rest, a working
+pip on every note whose job is running, and a live dot on the camp banner. The
+cast strip and MILITES light up every role that is on duty. The dashboard polls
+every 2.5s; a `live.json` older than 10 minutes (a killed process) is shown as
+"last seen", never as live.
+
+## Layout
+
+```
+web/
+├── serve.py                 stdlib server: static files + GET /api/camp
+├── index.html               the shell
+├── app.js                   routing, rendering, polling (no framework)
+├── styles.css               the palette and every shape
+├── assets/                  generated WebP + manifest.json, committed
+├── tools/prepare_assets.py  trims / cuts out / slices the raw art (dev only)
+└── tests/test_camp.py       stdlib tests: payload, HTTP, assets, read-only
+```
+
+## Assets
+
+`web/assets/` is committed: 43 WebP files plus `manifest.json`, about 1.8 MB
+total. They are generated from the raw PNGs in `docs/ui/assets-src/` (not
+committed, about 50 MB) with:
+
+```bash
+python3 web/tools/prepare_assets.py      # needs Pillow + numpy
+```
+
+That script trims transparent padding, cuts the flat-white backgrounds out of
+the desk/soldier/icon sheets (with a soft, de-fringed edge — no white halo),
+slices the sheets, resizes each sprite to 2x its CSS size and writes the
+manifest. The art direction (and the prompts that made
+it) lives in `docs/ui/assets.md`; the two style references are in
+`docs/ui/reference/`. Missing assets are not faked: the app simply renders
+broken images, so commit the output of the script when it changes.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s web/tests -v      # 15 tests, no network
+python3 -m unittest tests.test_live_heartbeat -v  # the runner's heartbeat
+```
+
+The web tests build throwaway projects with a fake `centuria view` and check the
+allowlist, error handling, discovery, the demo camp, static files, 405s, path
+traversal and that every manifest file exists. The heartbeat test loads
+`centuria/bin/run` and checks that `live.json` is written and removed (and that a
+missing job folder is harmless).
+
+## Screenshots
+
+`docs/camp.jpg`, `docs/tent.jpg`, `docs/cast.jpg`, `docs/quiet.jpg`,
+`docs/job.jpg` and `docs/scrolls.jpg` were taken from `--demo` mode at 1440x900.

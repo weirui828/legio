@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.DS_Store
+
+# raw generated art, kept locally; web/assets/ holds the committed, web-sized output
+docs/ui/assets-src/

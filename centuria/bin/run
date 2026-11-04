@@ -36,12 +36,45 @@ import uuid
 import subprocess
 import sys
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 
 CENTURIA = Path(__file__).resolve().parents[1]
 REPO = CENTURIA.parent
 JOB = CENTURIA / "bin" / "job"
 GATE = CENTURIA / "bin" / "gate"
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def live_path(order):
+    return CENTURIA / "jobs" / order["id"] / "live.json"
+
+
+def live_start(order, roles):
+    """Tell the dashboard which role is at the desk right now.
+
+    Best effort: a read-only repository or a missing job folder must never stop
+    the pipeline. A stale file is handled on the reading side (10 minute rule).
+    """
+    try:
+        live_path(order).write_text(json.dumps({
+            "roles": list(roles),
+            "round": order.get("round"),
+            "started": now_iso(),
+            "pid": os.getpid(),
+        }))
+    except OSError:
+        pass
+
+
+def live_end(order):
+    try:
+        live_path(order).unlink()
+    except OSError:
+        pass
 
 BOLD, DIM, RED, GREEN, YELLOW = "1", "2", "31", "32", "33"
 TTY = sys.stdout.isatty()
@@ -412,6 +445,7 @@ def main(argv):
 
         if kind == "reviews":
             running = []
+            live_start(order, [item["role"] for item in order["roles"]])
             for item in order["roles"]:
                 one = dict(order, role=item["role"], tier=item["tier"],
                            role_file=item["role_file"], task=item["task"])
@@ -437,6 +471,7 @@ def main(argv):
                     log = None
                 if code != 0:
                     failed.append((role, code, err or out, log))
+            live_end(order)
             if failed:
                 role, code, text, log = failed[0]
                 print(c(f"  {role} failed (exit {code})", RED))
@@ -461,7 +496,11 @@ def main(argv):
             print()
             print(body)
             return
-        res = invoke(prof, cmd, body, cwd)
+        live_start(order, [order["role"]])
+        try:
+            res = invoke(prof, cmd, body, cwd)
+        finally:
+            live_end(order)
         if res.returncode == 0:
             mark_session(prof, order)
         log = (CENTURIA / "jobs" / order["id"]
