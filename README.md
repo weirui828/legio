@@ -216,13 +216,19 @@ legio/                          the system
 │   ├── roles/*.md              the eight roles
 │   ├── config.json             routing, protected paths, merge policy
 │   └── checks.sh               this project's checks (you fill this in)
-└── swarm/                      review-only: a diff in, review files out
-    ├── swarm                   the command (reviewers and the repo, nothing else)
-    ├── api.py                  the library seam: review(...) -> Report
-    ├── hostkit.py              host adapter: build/spawn/collect
-    ├── roles/*.md              the five reviewers
-    ├── hosts/fake.json         test harness; real hosts come from ../hosts
-    └── config.json             reviewer tiers, default host
+├── swarm/                      review-only: a diff in, review files out
+│   ├── swarm                   the command (reviewers and the repo, nothing else)
+│   ├── api.py                  the library seam: review(...) -> Report
+│   ├── hostkit.py              host adapter: build/spawn/collect
+│   ├── roles/*.md              the five reviewers
+│   ├── hosts/fake.json         test harness; real hosts come from ../hosts
+│   └── config.json             reviewer tiers, default host
+└── web/                        the dashboard: a camp of tents, one per centuria
+    ├── serve.py                stdlib server: static files + GET /api/camp
+    ├── index.html app.js styles.css
+    ├── assets/                 generated art (WebP + manifest), committed
+    ├── tools/prepare_assets.py trims, cuts out and slices the raw art
+    └── tests/                  stdlib tests, no network, no model
 ```
 
 Stationed, a project looks like:
@@ -311,6 +317,25 @@ project's `.git/info/exclude`, so the reviewed project's `git status` stays clea
 Exit codes: `0` all PASS · `1` any CHANGES · `2` operational error · `3` empty diff. It
 never merges, comments or labels, and it keeps no state between runs. Full reference:
 `swarm/README.md`.
+
+## Camp Legio — the dashboard
+
+`web/` is a local, read-only webapp that shows the centuriae as a Roman camp: one tent
+per project, and inside a tent a **TABULA OPERUM** (AD FACIENDUM / IN CURSU / FACTUM)
+plus the role that is working right now. It is a separate tool: it reads the same
+contracts (`centuria view`, the role files, the live heartbeat) and writes nothing.
+
+```bash
+python3 web/serve.py              # http://127.0.0.1:8766, the real camp
+python3 web/serve.py --demo       # a fake camp, for design work
+```
+
+Each job is a pinned note; the lane comes from `active` / `waiting` / `terminal`, so the
+UI never learns stage semantics. `bin/run` writes
+`.centuria/jobs/<id>/live.json` around every agent call (`roles`, `round`, `started`,
+`pid`), which is how the desk knows who is on duty; a file older than ten minutes is
+shown as "last seen", not live. Full reference, asset pipeline and tests:
+`web/README.md`.
 
 ## Two hard rules
 

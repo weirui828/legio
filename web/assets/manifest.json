@@ -1,0 +1,221 @@
+{
+  "camp-ground": {
+    "file": "camp-ground.webp",
+    "w": 1672,
+    "h": 941
+  },
+  "tent-interior": {
+    "file": "tent-interior.webp",
+    "w": 1672,
+    "h": 941
+  },
+  "tent": {
+    "file": "tent.webp",
+    "w": 481,
+    "h": 460
+  },
+  "tent-open": {
+    "file": "tent-open.webp",
+    "w": 468,
+    "h": 460
+  },
+  "tent-alt-1": {
+    "file": "tent-alt-1.webp",
+    "w": 465,
+    "h": 460
+  },
+  "tent-alt-2": {
+    "file": "tent-alt-2.webp",
+    "w": 470,
+    "h": 460
+  },
+  "tent-warped": {
+    "file": "tent-warped.webp",
+    "w": 462,
+    "h": 460
+  },
+  "board": {
+    "file": "board.webp",
+    "w": 1331,
+    "h": 1072
+  },
+  "note": {
+    "file": "note.webp",
+    "w": 396,
+    "h": 400
+  },
+  "desk": {
+    "file": "desk.webp",
+    "w": 496,
+    "h": 460
+  },
+  "seal": {
+    "file": "seal.webp",
+    "w": 71,
+    "h": 72
+  },
+  "hearts-sparkles": {
+    "file": "hearts-sparkles.webp",
+    "w": 299,
+    "h": 300
+  },
+  "logo": {
+    "file": "logo.webp",
+    "w": 132,
+    "h": 128
+  },
+  "avatar": {
+    "file": "avatar.webp",
+    "w": 105,
+    "h": 104
+  },
+  "mascot-eagle": {
+    "file": "mascot-eagle.webp",
+    "w": 109,
+    "h": 112
+  },
+  "role-tesserarius": {
+    "file": "role-tesserarius.webp",
+    "w": 306,
+    "h": 300
+  },
+  "role-tesserarius-working": {
+    "file": "role-tesserarius-working.webp",
+    "w": 667,
+    "h": 680
+  },
+  "role-signifer": {
+    "file": "role-signifer.webp",
+    "w": 294,
+    "h": 300
+  },
+  "role-signifer-working": {
+    "file": "role-signifer-working.webp",
+    "w": 678,
+    "h": 680
+  },
+  "role-fabri": {
+    "file": "role-fabri.webp",
+    "w": 299,
+    "h": 300
+  },
+  "role-fabri-working": {
+    "file": "role-fabri-working.webp",
+    "w": 688,
+    "h": 680
+  },
+  "role-probator": {
+    "file": "role-probator.webp",
+    "w": 303,
+    "h": 300
+  },
+  "role-probator-working": {
+    "file": "role-probator-working.webp",
+    "w": 665,
+    "h": 680
+  },
+  "role-medicus": {
+    "file": "role-medicus.webp",
+    "w": 248,
+    "h": 300
+  },
+  "role-medicus-working": {
+    "file": "role-medicus-working.webp",
+    "w": 679,
+    "h": 680
+  },
+  "role-mensor": {
+    "file": "role-mensor.webp",
+    "w": 307,
+    "h": 300
+  },
+  "role-mensor-working": {
+    "file": "role-mensor-working.webp",
+    "w": 652,
+    "h": 680
+  },
+  "role-librator": {
+    "file": "role-librator.webp",
+    "w": 302,
+    "h": 300
+  },
+  "role-librator-working": {
+    "file": "role-librator-working.webp",
+    "w": 668,
+    "h": 680
+  },
+  "role-primus-pilus": {
+    "file": "role-primus-pilus.webp",
+    "w": 294,
+    "h": 300
+  },
+  "role-primus-pilus-working": {
+    "file": "role-primus-pilus-working.webp",
+    "w": 668,
+    "h": 680
+  },
+  "soldier-1": {
+    "file": "soldier-1.webp",
+    "w": 61,
+    "h": 108
+  },
+  "soldier-2": {
+    "file": "soldier-2.webp",
+    "w": 60,
+    "h": 108
+  },
+  "soldier-3": {
+    "file": "soldier-3.webp",
+    "w": 53,
+    "h": 108
+  },
+  "soldier-4": {
+    "file": "soldier-4.webp",
+    "w": 54,
+    "h": 108
+  },
+  "icon-castra": {
+    "file": "icon-castra.webp",
+    "w": 53,
+    "h": 56
+  },
+  "icon-milites": {
+    "file": "icon-milites.webp",
+    "w": 43,
+    "h": 56
+  },
+  "icon-legiones": {
+    "file": "icon-legiones.webp",
+    "w": 53,
+    "h": 56
+  },
+  "icon-nuntii": {
+    "file": "icon-nuntii.webp",
+    "w": 59,
+    "h": 56
+  },
+  "icon-bell": {
+    "file": "icon-bell.webp",
+    "w": 49,
+    "h": 56
+  },
+  "icon-coin": {
+    "file": "icon-coin.webp",
+    "w": 53,
+    "h": 56
+  },
+  "icon-heart": {
+    "file": "icon-heart.webp",
+    "w": 58,
+    "h": 56
+  },
+  "icon-level": {
+    "file": "icon-level.webp",
+    "w": 121,
+    "h": 56
+  },
+  "_meta": {
+    "source": "docs/ui/assets-src",
+    "scale": "2x css"
+  }
+}
