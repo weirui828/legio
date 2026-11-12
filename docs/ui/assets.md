@@ -123,7 +123,8 @@ profile with a heart-shaped crest, brass and terracotta, isolated, no text.*
 **`avatar.png`** (512x512) — *a cute Roman citizen portrait bust, warm smile,
 laurel wreath, cream and terracotta, isolated.* (the top-right medallion)
 **`mascot-eagle.png`** (512x512) — *a chubby friendly eagle mascot wearing a
-tiny laurel, isolated.* (the HELP button)
+tiny laurel, isolated.* (the HELP button; in the three-panel dashboard it
+carries the "needs you" messages and rides on Legatus's shoulder)
 **`seal.png`** (256x256) — *a single red wax seal blob, isolated.*
 **`soldiers.png`** (2048x512 sheet, 4 cells) — *four tiny chibi legionaries
 walking in different directions, side view, sprite sheet, flat background.*
@@ -142,6 +143,46 @@ warm sparkles, isolated.* (floating around the working role)
   desk, writing with a quill. Optional: the app can put the standing chibi
   behind `desk.png` and animate it, which reads fine. Generate these only if
   you want the exact reference pose for the glowing role.
+
+## Legatus — the legio agent (2 files)
+
+Legatus is the assistant in the dashboard's right panel: the one you talk to,
+who knows every centuria and proposes the `legio` commands you approve. He is
+**not** one of the eight roles. He never works a job stage, so he must never be
+mistaken for one: same style as the cast, but he reads as the one in charge.
+
+- **Same world as the cast:** same gouache style, line weight, face and warm
+  top-left light, so he clearly belongs to the camp.
+- **But set apart:** slightly older and taller than the chibis (about 3 heads
+  tall instead of 2.5), a calmer pose, and the only character in **imperial
+  purple**. No role uses purple, so his chat messages are recognisable at a
+  glance.
+- **Handsome, and still cute:** tousled dark curls, a warm easy half-smile,
+  soft rosy cheeks, kind eyes. Charming, not stern; no armour bulk, no helmet.
+- **Props:** a stylus and a wax tablet (he takes your orders), a laurel wreath,
+  and a tiny chubby eagle perched on his shoulder. The eagle is the same
+  character as `mascot-eagle.png`: the eagle carries the "needs you" messages,
+  so the two belong together.
+
+**`role-legatus.png`** (1024x1024) — standing, full body including feet.
+Prompt: *A cute, handsome young Roman legate, about 3 heads tall, slightly older
+and taller than the chibi legionaries, tousled dark curly hair, warm easy
+half-smile, kind eyes, rosy cheeks, laurel wreath, white tunic with an
+imperial-purple sash knotted around a brass breastplate, short purple cloak,
+holding a wax tablet and a stylus, a tiny chubby eagle with a laurel perched on
+his shoulder, relaxed confident pose, full body standing, facing slightly
+left, isolated.*
+
+**`role-legatus-working.png`** (1024x1024) — the same character seated at the
+same desk as the cast's working sprites, for the chat header and his avatar.
+Prompt: *The same handsome young Roman legate seated at a small wooden desk,
+writing on a wax tablet with a stylus, looking up with a warm smile, the tiny
+eagle perched on the desk corner, same purple sash and laurel wreath, isolated.*
+
+Wiring notes: `web/tools/prepare_assets.py` crops every `head-<role>` from that
+role's `-working` sprite, but only for the eight names in its `ROLES` list, so
+add `legatus` there (or a separate list) to get `head-legatus.webp`. Until the
+art exists, the prototype uses `avatar.webp` (the laurel bust) as a stand-in.
 
 ## Delivery
 
