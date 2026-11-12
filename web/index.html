@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Camp Legio</title>
 <meta name="color-scheme" content="light">
+<script>
+  // Two skins share this server: Principia (the default, /principia/) and this
+  // illustrated camp. ?skin=camp or the choice saved by either skin keeps you here.
+  (function () {
+    var skin = null;
+    try {
+      if (/[?&]skin=camp\b/.test(location.search)) localStorage.setItem('legio-skin', 'camp');
+      skin = localStorage.getItem('legio-skin');
+    } catch (e) { /* storage blocked: fall through to the default */ }
+    if (skin !== 'camp' && !/[?&]skin=camp\b/.test(location.search)) location.replace('principia/');
+  })();
+</script>
 <link rel="stylesheet" href="styles.css">
 <link rel="icon" href="assets/logo.webp">
 </head>

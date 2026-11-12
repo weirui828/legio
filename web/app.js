@@ -553,6 +553,8 @@ function showHelp() {
       with its job named in the bubble. If nobody is running, the desk is empty.</p>
       <p>Press <kbd>M</kbd> for the cast, <kbd>L</kbd> for the legions,
       <kbd>N</kbd> for what waits on you, <kbd>Esc</kbd> to close a panel.</p>
+      <p>Want everything on one page? <button class="skin-switch" type="button" data-skin="principia">Switch to Principia</button>,
+      the denser three-panel view. Its settings bring you back here.</p>
     </div>`);
 }
 
@@ -745,6 +747,12 @@ async function pollOnce() {
 /* --------------------------------------------------------------- events */
 
 document.addEventListener('click', (event) => {
+  const skin = event.target.closest('[data-skin]');
+  if (skin) {
+    try { localStorage.setItem('legio-skin', skin.dataset.skin); } catch (e) { /* ignore */ }
+    location.href = 'principia/';
+    return;
+  }
   const tent = event.target.closest('[data-open]');
   if (tent) {
     location.hash = `#/legion/${enc(tent.dataset.open)}`;

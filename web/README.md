@@ -1,9 +1,18 @@
 # Camp Legio — the dashboard
 
-A local, read-only webapp for legio's centuriae, drawn as a Roman camp. One tent
-per project; inside a tent, the **TABULA OPERUM** board with its jobs and the
-role that is working right now. Everything is generated art, nothing is fetched
-from the network, and the app never writes to a project.
+A local, read-only webapp for legio's centuriae, with two skins over the same
+server and data:
+
+- **Principia** (the default, `/principia/`): one dense page with three panels.
+  Projects on the left; in the middle every job of the selected project on a
+  progress track with its scroll underneath; on the right what needs you, who
+  is at work and Legatus.
+- **The camp** (the original, `/`): drawn as a Roman camp. One tent per
+  project; inside a tent, the **TABULA OPERUM** board with its jobs and the
+  role that is working right now.
+
+Everything is generated art, nothing is fetched from the network, and neither
+skin ever writes to a project.
 
 ```bash
 python3 web/serve.py            # http://127.0.0.1:8766 — the real camp
@@ -13,6 +22,38 @@ python3 web/serve.py --port 9000 --root ~/dev
 
 Stop with Ctrl-C. There is no build step and no dependency: Python's standard
 library serves the page and shells out to `centuria view` for the data.
+
+## Principia (the default skin)
+
+Opening `/` sends you to `/principia/` unless you chose the camp. Switch in
+Principia's settings (the gear, top right) or from the camp's HELP panel; the
+choice is kept in the browser (`localStorage["legio-skin"]`), and
+`/?skin=camp` always opens the camp.
+
+- **Left:** every stationed project as a tent with its numeral, counts and a
+  waiting / active / done bar. Under it, *Terra incognita*: git repositories
+  under the projects root without a centuria. Clicking one copies
+  `legio add <path>`.
+- **Middle:** the selected project's open jobs, one row each, on a progress
+  track across the stages (intake → merged) with the role at work, the round
+  bars and what is happening now; finished jobs below. *Table* switches to a
+  flat table. Selecting a job opens its scroll underneath: a
+  timeline built from its files (intake decision, spec, each round's gate and
+  reviews, feedback, decision) next to a reader for each file.
+- **Right:** *Nuntii*, every job across all projects that waits on you, with
+  the command to run; *At work*, the running roles with timers and the working
+  character at the desk; *Legatus*, who reports what changed while the page is
+  open. Talking to Legatus is not built yet.
+- **Settings:** interface (Principia / camp), progress track (*Aqueduct*:
+  water flows as far as the job has got, a crack marks a failed gate, a sluice
+  means it waits on you; *Road*: milestones I–VI and the golden milestone;
+  *Plain*), density, Latin or English labels, animations, the desk scene,
+  costs and finished jobs. Saved per browser.
+
+Every action is a **copied command** (`gh pr merge 9`, `legio say legio:003
+"…"`, `legio reject …`) for you to run; the page itself stays read-only.
+Keys: `⌘K` filter, `j`/`k` move between jobs, `v` Via/Table, `Esc` closes
+settings. Deep links: `#/legion/<name>` and `#/legion/<name>/job/<id>`.
 
 ## What you see
 
@@ -77,8 +118,10 @@ legio's `config.json`, or `--root`), then for each project:
   can be more than one, so several jobs can be working at once);
 - parses `.centuria/roles/*.md` (frontmatter + first blockquote) for the cast.
 
-`GET /api/camp` is the only endpoint; every other method is 405. There are no
-write endpoints and no agent calls.
+`GET /api/camp` also lists `uncharted`: `{name, path}` of git repositories
+under the root that have no centuria (nothing inside them is read). With the
+two scroll endpoints above these are the only routes; every other method is
+405. There are no write endpoints and no agent calls.
 
 ### The heartbeat
 
@@ -101,8 +144,9 @@ every 2.5s; a `live.json` older than 10 minutes (a killed process) is shown as
 
 ```
 web/
-├── serve.py                 stdlib server: static files + GET /api/camp
-├── index.html               the shell
+├── serve.py                 stdlib server: static files + the read-only API
+├── principia/               the default skin: index.html, app.js, styles.css
+├── index.html               the camp's shell (sends you to principia/ by default)
 ├── app.js                   routing, rendering, polling (no framework)
 ├── styles.css               the palette and every shape
 ├── assets/                  generated WebP + manifest.json, committed
@@ -112,7 +156,7 @@ web/
 
 ## Assets
 
-`web/assets/` is committed: 43 WebP files plus `manifest.json`, about 1.8 MB
+`web/assets/` is committed: 51 WebP files plus `manifest.json`, about 1.9 MB
 total. They are generated from the raw PNGs in `docs/ui/assets-src/` (not
 committed, about 50 MB) with:
 
@@ -131,7 +175,7 @@ broken images, so commit the output of the script when it changes.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s web/tests -v      # 15 tests, no network
+python3 -m unittest discover -s web/tests -v      # 22 tests, no network
 python3 -m unittest tests.test_live_heartbeat -v  # the runner's heartbeat
 ```
 

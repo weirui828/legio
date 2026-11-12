@@ -20,7 +20,7 @@ receives. Everything is checked against the source; where a doc disagrees, the s
 | **legio** | finds projects, turns labelled issues into jobs, owns the host registry, wraps the centuria CLI | `legio`, `config.json`, `hosts/` | never copied into a project |
 | **centuria** | the pipeline: state machine, roles, artifacts, one worktree per job | `centuria/` (template) | `<project>/.centuria/` |
 | **swarm** | review-only: diff in, review files out | `swarm/` | runs against any git repo |
-| **web** | read-only camp dashboard | `web/` | reads projects, writes nothing |
+| **web** | read-only dashboard, two skins (Principia, camp) | `web/` | reads projects, writes nothing |
 
 Stationing copies `centuria/` to `<project>/.centuria/`, appends `.centuria/`, `.worktrees/` and the
 host's `host_paths` to the project's **`.git/info/exclude`** (never `.gitignore`), and stamps
@@ -39,7 +39,7 @@ shipped code.
 ./legio --help && ./legio hosts && ./legio doctor   # discovery/health, read-only
 python3 -m unittest discover -s tests -p 'test_*.py' -v   # 7 tests
 python3 -m unittest discover -s swarm/tests -v            # 24 tests
-python3 -m unittest discover -s web/tests -v              # 19 tests
+python3 -m unittest discover -s web/tests -v              # 22 tests
 python3 -m py_compile legio centuria/bin/centuria centuria/bin/job \
   centuria/bin/gate centuria/bin/run swarm/swarm swarm/*.py web/*.py web/tools/*.py tests/*.py
 bash .centuria/checks.sh          # this checkout's real static checks
@@ -90,7 +90,8 @@ Pipeline-blindness check: `grep -nE 'tesserarius|build\.md|VERDICT:' legio` come
 | `swarm/hostkit.py` | host adapter: build/spawn/collect; no jobs, no sessions. |
 | `swarm/config.json`, `roles/*.md`, `hosts/fake.json` | reviewer registry + 5 prompts + test harness (shadows `../hosts/fake.json`). |
 | `web/serve.py` | stdlib HTTP: static `web/` + 3 read-only JSON endpoints; shells out to `centuria view` only. |
-| `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | UI, 51 WebP + manifest, art pipeline, tests, screenshots. |
+| `web/principia/{index.html,app.js,styles.css}` | the default skin: three panels (projects / job track + scroll / needs you, at work, Legatus). |
+| `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | the camp skin, 51 WebP + manifest, art pipeline, tests, screenshots. |
 | `tests/` | `fake-agent.py`, `test_hosts_json.py` (4), `test_live_heartbeat.py` (3), `token-report.py`. |
 | `docs/ui/` | `assets.md` (art direction), `camp-issue.md` (design brief), `reference/*.jpg`; `assets-src/` local, gitignored. |
 | `.centuria/`, `.worktrees/` (+ `.dsh/` with the dsh host) | local, untracked, listed in `.git/info/exclude`. |
@@ -450,7 +451,7 @@ All suites are stdlib `unittest`, offline, temp-dir fixtures, from the repo root
 |---|---|---|
 | `python3 -m unittest discover -s tests -p 'test_*.py' -v` | 7 | `legio hosts --json` shape/parse/fallbacks + `live.json` write/remove/missing folder |
 | `python3 -m unittest discover -s swarm/tests -v` | 24 | fan-out, PASS/CHANGES/ERROR, exit codes, `--diff`/`--pr`/`--spec`, crashed reviewer, tier/risk overrides, `--jobs 1`, dry-run, empty diff, unknown reviewer/host, library API, clean `git status` |
-| `python3 -m unittest discover -s web/tests -v` | 19 | payload allowlist, discovery, demo camp, HTTP routes, scroll allowlist/caps, 405s, traversal, asset manifest |
+| `python3 -m unittest discover -s web/tests -v` | 22 | payload allowlist, discovery, uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest |
 | `python3 -m unittest tests.test_live_heartbeat -v` | 3 | heartbeat tests, addressable individually |
 | `bash .centuria/checks.sh` | — | this checkout's gate: `py_compile`, `json.tool`, `bash -n` |
 
@@ -484,7 +485,7 @@ writes nothing to any project.
 
 | endpoint | returns |
 |---|---|
-| `GET /api/camp` | `{generated_at, demo, projects:[{name, path, ok, error, jobs, cast, lives}]}`; jobs filtered to `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster, cost_usd, active, waiting, terminal, human_reason` (no worktree, prompts, config or secrets) |
+| `GET /api/camp` | `{generated_at, demo, projects:[{name, path, ok, error, jobs, cast, lives}], uncharted:[{name, path}]}` (`uncharted` = git repos under the root without a centuria); jobs filtered to `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster, cost_usd, active, waiting, terminal, human_reason` (no worktree, prompts, config or secrets) |
 | `GET /api/job?project=&job=` | allowlisted artifact listing (`files[]` with `path, size, kind`) |
 | `GET /api/job/file?project=&job=&path=` | `{path, size, truncated, text}` for one artifact |
 
@@ -499,14 +500,20 @@ Data: `read_jobs` runs `centuria view`; `read_lives` globs `.centuria/jobs/*/liv
 `age_seconds`, `stale`); `parse_cast` reads role frontmatter + blockquote. `--demo` serves a synthetic
 four-project camp and `DEMO_SCROLLS`.
 
-UI: `app.js` polls `/api/camp` every 2.5 s; lanes come only from `active`/`waiting`/`terminal`;
-`live.json` roles appear at the desk; a heartbeat older than 600 s is "last seen". Hash routes: `#/`,
-`#/legion/<name>`, `.../cast`, `.../job/<id>`, `.../scrolls`.
+Two skins, same API. A directory with an `index.html` is served at `<dir>/` (`/principia` → 301).
+**Principia** (`web/principia/`, the default): polls `/api/camp` every 2.5 s, builds each open job's
+story from `/api/job` + header lines of `intake.md`, `decision.md`, `round-N/checks.md` and
+`review-*.md` (cached per stage/round/gate/reviews), and offers actions only as copied commands;
+settings live in `localStorage["principia-prefs"]`. Routes `#/legion/<name>[/job/<id>]`.
+**Camp** (`web/index.html` + `app.js`): `index.html` redirects to `principia/` unless
+`localStorage["legio-skin"] == "camp"` or `?skin=camp`; lanes come only from
+`active`/`waiting`/`terminal`; `live.json` roles appear at the desk; a heartbeat older than 600 s is
+"last seen". Hash routes: `#/`, `#/legion/<name>`, `.../cast`, `.../job/<id>`, `.../scrolls`.
 
 Assets: `web/assets/` is committed (51 WebP + `manifest.json` with `file/w/h`), generated from
 `docs/ui/assets-src/` (local, gitignored, 64 MB here) by `web/tools/prepare_assets.py`; art direction in
 `docs/ui/assets.md`. Screenshots: `web/docs/{camp,tent,job,scrolls,cast,quiet}.jpg` (note the `web/`
-prefix). Tests: 19, fake projects with a stub `centuria view`.
+prefix). Tests: 22, fake projects with a stub `centuria view`.
 
 ## 13. Gotchas
 
@@ -559,6 +566,4 @@ prefix). Tests: 19, fake projects with a stub `centuria view`.
 | `docs/ui/assets.md` / `camp-issue.md` | art / historical design brief | sprites, prompts, palette; camp-issue predates the implementation (`legio web`, `centuria cast --json` do not exist) |
 | `centuria/roles/*.md`, `hosts/*.json` `about`/`_note` | agents, operator | role behavior, surfaces, output contract; invocation, tiers, secrets |
 
-Known stale claims: `web/README.md` says 15 web tests (actual 19), "43 WebP" (actual 51), and
-"`/api/camp` is the only endpoint" (web/README itself also documents `/api/job` and
-`/api/job/file`). Prefer the source.
+Where a doc and the source disagree, prefer the source.

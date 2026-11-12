@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Legio Principia</title>
+<meta name="color-scheme" content="light">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="../assets/logo.webp">
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <a class="brand" href="#/" aria-label="Legio Principia, home"><img src="../assets/logo.webp" alt=""><b>LEGIO</b><span>PRINCIPIA</span></a>
+    <label class="search"><input id="q" type="search" placeholder="Filter jobs by title, id or issue" aria-label="Filter jobs" autocomplete="off"><kbd>⌘K</kbd></label>
+    <div class="stats" id="stats"></div>
+    <button class="gear" id="gear" type="button" aria-label="Settings" aria-expanded="false" aria-controls="sets"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.6"/></svg></button>
+    <div class="sets" id="sets" hidden role="dialog" aria-label="Settings"></div>
+  </header>
+
+  <div class="cols">
+    <nav class="pane left" aria-label="Projects">
+      <div><div class="label"><span><span class="la">CASTRA</span><span class="en">PROJECTS</span></span> <em id="ncastra"></em></div><div id="projects"></div></div>
+      <div id="unch-wrap"><div class="label"><span><span class="la">TERRA INCOGNITA</span><span class="en">NOT SET UP</span></span> <em>no centuria yet</em></div><div id="uncharted"></div></div>
+      <div class="foot"><div class="campart" role="img" aria-label="The camp"></div><span id="foot"></span></div>
+    </nav>
+
+    <main class="pane mid" id="mid">
+      <div class="mhead" id="mhead"></div>
+      <div class="board" id="board"></div>
+      <section class="detail" id="detail" aria-label="Job details"></section>
+    </main>
+
+    <aside class="pane right" aria-label="Needs you, at work and Legatus">
+      <div class="sec"><div class="label"><span class="eh"><img src="../assets/mascot-eagle.webp" alt="" class="eagle"><span class="la">NUNTII · NEEDS YOU</span><span class="en">NEEDS YOU</span></span> <em id="nneed"></em></div><div id="needs"></div></div>
+      <div class="sec"><div class="label">AT WORK <em id="nwork"></em></div><div id="desk"></div><div id="work"></div></div>
+      <div class="chat">
+        <div class="label"><span class="eh"><img src="../assets/avatar.webp" alt="" class="lgface">LEGATUS</span> <em>your legio agent</em></div>
+        <div class="msgs" id="msgs" aria-live="polite"></div>
+        <div class="soon">Talking to Legatus comes later. For now he reports what changed while this page is open.</div>
+      </div>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="app.js" defer></script>
+</body>
+</html>
