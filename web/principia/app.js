@@ -46,7 +46,7 @@ const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute:
 
 const prefs = {
   line: 'aqueduct', density: 'comfortable', lang: 'latin',
-  motion: true, desk: true, cost: true, done: true,
+  motion: true, desk: true, cost: true, done: true, detailH: null, storyW: null, lfold: false, rfold: false,
 };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('principia-prefs') || '{}')); } catch (_) { /* private mode */ }
 function savePrefs() { try { localStorage.setItem('principia-prefs', JSON.stringify(prefs)); } catch (_) { /* ignore */ } }
@@ -57,6 +57,14 @@ function applyPrefs() {
   b.toggle('nomotion', !prefs.motion);
   b.toggle('nodesk', !prefs.desk);
   b.toggle('nocost', !prefs.cost);
+  b.toggle('lfold', !!prefs.lfold);
+  b.toggle('rfold', !!prefs.rfold);
+  document.querySelectorAll('[data-fold="left"]').forEach((el) => {
+    el.setAttribute('aria-expanded', String(!prefs.lfold));
+    el.title = prefs.lfold ? 'Show projects ( [ )' : 'Hide projects ( [ )';
+    el.setAttribute('aria-label', prefs.lfold ? 'Show projects' : 'Hide projects');
+  });
+  document.querySelectorAll('[data-fold="right"]').forEach((el) => el.setAttribute('aria-expanded', String(!prefs.rfold)));
 }
 function useSkin(skin) {
   try { localStorage.setItem('legio-skin', skin); } catch (_) { /* ignore */ }
@@ -67,9 +75,9 @@ function useSkin(skin) {
 
 const state = {
   data: null, fetchedAt: 0, error: null, fingerprint: '',
-  project: null, job: null, view: 'via', file: null, q: '',
+  project: null, job: null, view: 'via', file: null, q: '', big: false,
   history: new Map(), files: new Map(), queue: Promise.resolve(),
-  seen: null, msgs: [],
+  seen: null, msgs: [], unread: 0,
 };
 
 const projects = () => state.data?.projects || [];
@@ -195,6 +203,7 @@ function fingerprint(data) {
 function say(html) {
   state.msgs.push({ at: clock(), html });
   if (state.msgs.length > 40) state.msgs.shift();
+  if (prefs.rfold && $('#lgwin').hidden) state.unread += 1;
   renderMsgs();
 }
 
@@ -334,7 +343,7 @@ function renderLeft() {
     const total = Math.max(1, c.active + c.waiting + c.done);
     const bar = !p.ok ? '<div class="pbar"><i style="flex:1;background:var(--red)"></i></div>'
       : `<div class="pbar"><i style="flex:${c.waiting / total};background:var(--ochre)"></i><i style="flex:${c.active / total};background:var(--blue)"></i><i style="flex:${c.done / total};background:var(--ink-3)"></i></div>`;
-    return `<a class="proj ${on ? 'on' : ''}" href="#/legion/${enc(p.name)}" ${on ? 'aria-current="page"' : ''}>
+    return `<a class="proj ${on ? 'on' : ''}" href="#/legion/${enc(p.name)}" title="${esc(p.name)}" ${on ? 'aria-current="page"' : ''}>
       <span class="tentic"><img src="${asset(tent)}" alt=""><b>${roman(i + 1)}</b></span>
       <span style="min-width:0"><div class="pname">${esc(p.name)}</div>
         <div class="psub ${p.ok ? '' : 'err'}">${p.ok ? `${c.active} active · ${c.waiting} waiting · ${c.done} done` : 'cannot read'}</div>${bar}</span>
@@ -566,6 +575,13 @@ function storyOf(p, j) {
   if (j.stage === 'needs-info') items.push({ label: 'The author', text: `answers on issue #${j.issue}; the job resumes on its own`, state: 'you' });
   if (j.stage === 'merged') items.push({ label: 'Merged', text: j.pr ? `PR #${j.pr}` : '', state: 'ok' });
   if (j.stage === 'rejected') items.push({ label: 'Rejected', text: '', state: 'fail', file: has('rejection.md') ? 'rejection.md' : null });
+  const shown = new Set(items.map((s) => s.file).filter(Boolean));
+  for (const f of h.files) {
+    if (shown.has(f)) continue;
+    const log = f.match(/^agent-(\d+)-([\w-]+)\.log$/);
+    if (log) items.push({ label: `${roleName(log[2])} log`, role: log[2], text: `round ${log[1]}`, file: f, kind: 'log' });
+    else items.push({ label: f.replace(/\.md$/, ''), text: '', file: f });
+  }
   return { items, files: h.files };
 }
 
@@ -584,6 +600,27 @@ function actionsOf(p, j) {
   }
   acts.push(['Copy job id', j.id]);
   return acts;
+}
+
+// one quiet line under the title: only the facts this job actually has
+function factsOf(p, j) {
+  const live = liveOf(p, j);
+  const stage = j.stage === 'needs-human' ? 'needs you' : j.stage === 'needs-info' ? 'needs info' : j.stage;
+  const tone = isWaiting(j) ? 'b-ochre' : j.stage === 'merged' ? 'b-verd' : j.stage === 'rejected' ? 'b-red' : live ? 'b-blue' : 'b-mute';
+  const bits = [`<span class="badge ${tone}">${esc(stage)}</span>`];
+  if (j.round) bits.push(`<span class="dm">round ${esc(j.round)} of ${esc(j.round_limit || '?')}</span>`);
+  if (j.gate) bits.push(`<span class="dm">gate <b class="${j.gate === 'PASS' ? 'okt' : 'badt'}">${esc(j.gate.toLowerCase())}</b></span>`);
+  if (j.pr) bits.push(`<span class="dm">PR #${esc(j.pr)}</span>`);
+  const reviewers = [...new Set([...Object.keys(j.roster?.reviewers || {}), ...Object.keys(j.reviews || {})])];
+  if (reviewers.length) {
+    bits.push(`<span class="dm faces" title="reviewers: ${esc(reviewers.map(roleName).join(', '))}">${reviewers.map((r) => {
+      const v = (j.reviews || {})[r];
+      return mg(r, v === 'PASS' ? 'pass' : v === 'CHANGES' ? 'chg' : 'pend');
+    }).join('')}</span>`);
+  }
+  bits.push(`<span class="dm cost">$${(Number(j.cost_usd) || 0).toFixed(2)}</span>`);
+  bits.push(`<span class="dm mono id" title="job id">${esc(p.name)}:${esc(j.id)}</span>`);
+  return bits.join('');
 }
 
 function renderMd(text) {
@@ -613,26 +650,144 @@ function renderDetail() {
   const box = $('#detail');
   $('#mid').classList.toggle('nodetail', !j);
   box.hidden = !j;
-  if (!j) { box.innerHTML = ''; return; }
+  if (!j) { box.innerHTML = ''; if (state.big) setBig(false); return; }
   enqueueHistory(p, j);
   const { items, files } = storyOf(p, j);
   if (!files.includes(state.file)) {
     const withFile = items.filter((s) => s.file);
     state.file = (withFile[withFile.length - 1] || {}).file || files[0] || null;
   }
-  const roster = Object.keys(j.roster?.reviewers || {}).map(roleName).join(', ');
-  const chips = [['stage', j.stage], ['round', `${j.round || 0}/${j.round_limit || '?'}`], ['gate', j.gate || '–'],
-    ['PR', j.pr ? `#${j.pr}` : '–'], ['cost', `$${(Number(j.cost_usd) || 0).toFixed(2)}`], ['reviewers', roster || '–']];
   const acts = actionsOf(p, j);
-  const head = (s) => (s.role && ROLE_NAMES[s.role] ? `<img src="${asset(`head-${s.role}`)}" alt="" title="${esc(roleName(s.role))}">` : '');
-  box.innerHTML = `<div class="dhead"><span class="id">${esc(p.name)}:${esc(j.id)}</span><h2>${esc(j.title)}</h2>
-      <div class="chips">${chips.map(([k, v]) => `<span class="chip ${k === 'cost' ? 'cost' : ''}">${k} <b>${esc(v)}</b></span>`).join('')}</div>
-      <div class="acts">${acts.map(([label, cmd, pri]) => `<button class="btn ${pri ? 'pri' : ''}" type="button" data-copy="${esc(cmd)}" title="${esc(cmd)}">${esc(label)}</button>`).join('')}</div></div>
-    <div class="dbody"><div class="story">${items.map((s) => `<div class="st ${s.state || ''}"><div class="h">${esc(s.label)}${head(s)}</div>${s.text ? `<div class="t">${esc(s.text)}</div>` : ''}${s.file ? `<button class="f ${state.file === s.file ? 'on' : ''}" type="button" data-file="${esc(s.file)}">${esc(s.file)}</button>` : ''}</div>`).join('')}</div>
-      <div class="reader"><div class="tabs" role="tablist">${files.map((f) => `<button class="tab ${state.file === f ? 'on' : ''}" type="button" role="tab" aria-selected="${state.file === f}" data-file="${esc(f)}">${esc(f)}</button>`).join('')}</div>
+  const primary = acts.find((a) => a[2]);
+  const rest = acts.filter((a) => a !== primary);
+  const head = (s) => (s.role && ROLE_NAMES[s.role] ? mg(s.role, 'tiny') : '');
+  box.innerHTML = `<div class="dhead">
+      <div class="dtitle"><h2 title="${esc(j.title)}">${esc(j.title)}</h2><div class="dmeta">${factsOf(p, j)}</div></div>
+      <div class="acts">${primary ? `<button class="btn pri" type="button" data-copy="${esc(primary[1])}" title="${esc(primary[1])}">${esc(primary[0])}</button>` : ''}
+        <details class="menu"><summary class="btn" title="Copy a command">Copy<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>
+          <div class="menu-list">${rest.map(([label, cmd]) => `<button type="button" data-copy="${esc(cmd)}"><b>${esc(label.replace(/^Copy /, ''))}</b><span class="mono">${esc(cmd)}</span></button>`).join('')}</div></details>
+        ${expandButton()}</div></div>
+    <div class="dbody"><div class="story" aria-label="Timeline and files">${items.map((s) => `<div class="st ${s.state || ''}"><div class="h">${esc(s.label)}${head(s)}</div>${s.text ? `<div class="t">${esc(s.text)}</div>` : ''}${s.file ? `<button class="f ${state.file === s.file ? 'on' : ''}" type="button" data-file="${esc(s.file)}">${esc(s.file)}</button>` : ''}</div>`).join('')}</div>
+      <div class="vsplit" role="separator" aria-orientation="vertical" aria-label="Resize the timeline (drag, or use the arrow keys; double-click to reset)" tabindex="0"></div>
+      <div class="reader"><div class="docbar"><span class="mono">${esc(state.file || '')}</span>${state.file ? `<span class="note">${files.indexOf(state.file) + 1} of ${files.length}</span>` : ''}</div>
         <div class="doc" id="doc">${files.length ? '<p class="note">Loading…</p>' : '<p class="note">No files yet. They appear as the roles write them.</p>'}</div></div></div>`;
+  const on = box.querySelector('.story .f.on');
+  if (on) on.scrollIntoView({ block: 'nearest' });
   loadDoc(p, j);
 }
+
+// ---------------------------------------------------------------- the job's scroll: resize and pop out
+
+const EXPAND_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/></svg>';
+const SHRINK_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 6.5h-4v-4M9.5 6.5 14 2M2.5 9.5h4v4M6.5 9.5 2 14"/></svg>';
+function expandButton() {
+  const label = state.big ? 'Shrink back (Esc)' : 'Expand';
+  return `<button class="btn ico-btn" type="button" data-expand title="${label}" aria-label="${label}" aria-pressed="${state.big}">${state.big ? SHRINK_ICON : EXPAND_ICON}</button>`;
+}
+function setBig(big) {
+  state.big = big;
+  document.body.classList.toggle('bigdetail', big);
+  $('#scrim').hidden = !big;
+  const b = document.querySelector('[data-expand]');
+  if (b) b.outerHTML = expandButton();
+  if (big) document.querySelector('[data-expand]')?.focus();
+}
+
+// drag the bar beside the timeline to share the width between it and the file
+const STORY_MIN = 160;
+function setStoryWidth(px, save) {
+  const detail = $('#detail');
+  if (px == null) {
+    detail.style.removeProperty('--sw');
+    prefs.storyW = null;
+  } else {
+    const body = detail.querySelector('.dbody');
+    const max = (body ? body.clientWidth : 900) - 320;
+    const w = Math.round(Math.max(STORY_MIN, Math.min(max, px)));
+    detail.style.setProperty('--sw', `${w}px`);
+    prefs.storyW = w;
+  }
+  if (save) savePrefs();
+}
+document.addEventListener('pointerdown', (e) => {
+  const bar = e.target.closest && e.target.closest('.vsplit');
+  if (!bar || e.button !== 0) return;
+  e.preventDefault();
+  try { bar.setPointerCapture(e.pointerId); } catch (_) { /* pointer already gone */ }
+  bar.classList.add('drag');
+  document.body.classList.add('resizing-x');
+  const left = bar.parentElement.getBoundingClientRect().left;
+  const move = (ev) => setStoryWidth(ev.clientX - left - 4, false);
+  const up = () => {
+    bar.removeEventListener('pointermove', move);
+    bar.removeEventListener('pointerup', up);
+    bar.removeEventListener('pointercancel', up);
+    bar.classList.remove('drag');
+    document.body.classList.remove('resizing-x');
+    savePrefs();
+  };
+  bar.addEventListener('pointermove', move);
+  bar.addEventListener('pointerup', up);
+  bar.addEventListener('pointercancel', up);
+});
+document.addEventListener('dblclick', (e) => { if (e.target.closest && e.target.closest('.vsplit')) setStoryWidth(null, true); });
+document.addEventListener('keydown', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('vsplit')) return;
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  e.preventDefault();
+  const now = document.querySelector('#detail .story').offsetWidth;
+  setStoryWidth(now + (e.key === 'ArrowRight' ? 24 : -24), true);
+});
+
+// drag the bar between the board and the scroll to give either more room
+const DETAIL_MIN = 140;
+function clampDetail(px) {
+  const mid = $('#mid');
+  const head = $('#mhead').offsetHeight;
+  const max = mid.clientHeight - head - 9 - 120;
+  return Math.round(Math.max(DETAIL_MIN, Math.min(max, px)));
+}
+function setDetailHeight(px, save) {
+  if (px == null) {
+    $('#mid').style.removeProperty('--dh');
+    prefs.detailH = null;
+  } else {
+    const h = clampDetail(px);
+    $('#mid').style.setProperty('--dh', `${h}px`);
+    prefs.detailH = h;
+  }
+  if (save) savePrefs();
+}
+(() => {
+  const split = $('#split');
+  split.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try { split.setPointerCapture(e.pointerId); } catch (_) { /* pointer already gone */ }
+    split.classList.add('drag');
+    document.body.classList.add('resizing');
+    const bottom = $('#mid').getBoundingClientRect().bottom;
+    const move = (ev) => setDetailHeight(bottom - ev.clientY - 4, false);
+    const up = () => {
+      split.removeEventListener('pointermove', move);
+      split.removeEventListener('pointerup', up);
+      split.removeEventListener('pointercancel', up);
+      split.classList.remove('drag');
+      document.body.classList.remove('resizing');
+      savePrefs();
+    };
+    split.addEventListener('pointermove', move);
+    split.addEventListener('pointerup', up);
+    split.addEventListener('pointercancel', up);
+  });
+  split.addEventListener('dblclick', () => setDetailHeight(null, true));
+  split.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const now = $('#detail').offsetHeight;
+    setDetailHeight(now + (e.key === 'ArrowUp' ? 32 : -32), true);
+  });
+})();
 
 async function loadDoc(p, j) {
   const path = state.file;
@@ -666,6 +821,9 @@ function renderNeeds() {
     }
   }
   $('#nneed').textContent = rows.length || '';
+  $('#rneed').textContent = rows.length;
+  $('#rneed').hidden = !rows.length;
+  $('.eaglebtn').title = `${rows.length ? `${rows.length} need${rows.length === 1 ? 's' : ''} you. ` : ''}Show needs you, at work and Legatus ( ] )`;
   $('#needs').innerHTML = rows.join('') || '<div class="note" style="padding:0 6px">The eagle has no messages for you.</div>';
 }
 
@@ -711,10 +869,27 @@ function renderWork() {
 }
 
 function renderMsgs() {
-  const box = $('#msgs');
-  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-  box.innerHTML = state.msgs.map((m) => `<div class="lgrow"><img src="${asset('avatar')}" alt="Legatus"><div class="msg"><time>${esc(m.at)}</time>${m.html}</div></div>`).join('');
-  if (near) box.scrollTop = box.scrollHeight;
+  const html = state.msgs.map((m) => `<div class="lgrow"><span class="lgface" role="img" aria-label="Legatus"></span><div class="msg"><time>${esc(m.at)}</time>${m.html}</div></div>`).join('');
+  for (const box of [$('#msgs'), $('#lgmsgs')]) {
+    const near = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.innerHTML = html;
+    if (near) box.scrollTop = box.scrollHeight;
+  }
+  $('#lgdot').hidden = !state.unread;
+  $('.lgbtn').title = state.unread ? `Legatus has ${state.unread} new ${state.unread === 1 ? 'message' : 'messages'}` : 'Talk to Legatus';
+}
+
+// Legatus's own window, opened from his face on the folded right rail
+function openLegatus(open) {
+  $('#lgwin').hidden = !open;
+  $('.lgbtn').setAttribute('aria-expanded', String(open));
+  if (open) {
+    state.unread = 0;
+    renderMsgs();
+    const box = $('#lgmsgs');
+    box.scrollTop = box.scrollHeight;
+    $('[data-legatus-close]').focus();
+  }
 }
 
 // ---------------------------------------------------------------- settings panel
@@ -732,8 +907,20 @@ const TRACK_NOTE = {
 function pick(key, opts, mini) {
   return `<div class="pick" role="group">${opts.map(([v, t]) => `<button type="button" class="${prefs[key] === v ? 'on' : ''}" data-pref="${key}" data-val="${v}" aria-pressed="${prefs[key] === v}">${mini ? MINI[v] : ''}${t}</button>`).join('')}</div>`;
 }
+const PANEL_TOGGLES = { lopen: 'lfold', ropen: 'rfold' };   // "open" switches stored as "folded"
 function tog(key, label) {
-  return `<label class="tog" for="pref-${key}">${label}<input type="checkbox" id="pref-${key}" data-toggle="${key}" ${prefs[key] ? 'checked' : ''}></label>`;
+  const on = PANEL_TOGGLES[key] ? !prefs[PANEL_TOGGLES[key]] : prefs[key];
+  return `<label class="tog" for="pref-${key}">${label}<input type="checkbox" id="pref-${key}" data-toggle="${key}" ${on ? 'checked' : ''}></label>`;
+}
+function fold(side) {
+  const key = side === 'left' ? 'lfold' : 'rfold';
+  prefs[key] = !prefs[key];
+  savePrefs(); applyPrefs(); afterFold();
+}
+function afterFold() {
+  if (!prefs.rfold) { openLegatus(false); state.unread = 0; renderMsgs(); }
+  if (!$('#sets').hidden) renderSettings();
+  if (prefs.detailH) $('#mid').style.setProperty('--dh', `${clampDetail(prefs.detailH)}px`);
 }
 function renderSettings() {
   $('#sets').innerHTML = `<h3>SETTINGS<button type="button" data-close aria-label="Close settings">×</button></h3>
@@ -742,6 +929,7 @@ function renderSettings() {
     <div class="srow"><span>Density</span>${pick('density', [['comfortable', 'Comfortable'], ['compact', 'Compact']])}</div>
     <div class="srow"><span>Labels</span>${pick('lang', [['latin', 'Latin and English'], ['english', 'English only']])}</div>
     <div class="srow">${tog('motion', 'Animations')}${tog('desk', 'Desk scene in At work')}${tog('cost', 'Show costs')}${tog('done', 'Show finished jobs')}</div>
+    <div class="srow"><span>Panels</span>${tog('lopen', 'Projects on the left')}${tog('ropen', 'Needs you, at work and Legatus')}<small>Keys: [ and ] fold each side, \\ folds both for focus.</small></div>
     <div class="note">Saved in this browser only.</div>`;
 }
 function openSettings(open) {
@@ -793,7 +981,13 @@ async function copy(text) {
 
 document.addEventListener('click', (e) => {
   const c = e.target.closest('[data-copy]');
-  if (c) { e.preventDefault(); e.stopPropagation(); copy(c.dataset.copy); return; }
+  if (c) { e.preventDefault(); e.stopPropagation(); copy(c.dataset.copy); closeMenus(); return; }
+  if (e.target.closest('[data-expand]')) { setBig(!state.big); return; }
+  if (e.target.closest('#scrim')) { setBig(false); return; }
+  if (e.target.closest('[data-legatus]')) { openLegatus($('#lgwin').hidden); return; }
+  if (e.target.closest('[data-legatus-close]')) { openLegatus(false); $('.lgbtn').focus(); return; }
+  const fd = e.target.closest('[data-fold]');
+  if (fd) { fold(fd.dataset.fold); return; }
   const row = e.target.closest('[data-job]');
   if (row && state.project) { go(state.project, row.dataset.job); return; }
   const f = e.target.closest('[data-file]');
@@ -808,6 +1002,9 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); return; }
   if (e.key === 'Escape' && !$('#sets').hidden) { openSettings(false); $('#gear').focus(); return; }
+  if (e.key === 'Escape' && state.big) { setBig(false); return; }
+  if (e.key === 'Escape' && !$('#lgwin').hidden) { openLegatus(false); $('.lgbtn').focus(); return; }
+  if (e.key === 'f' && !e.target.matches('input, textarea') && !e.metaKey && !e.ctrlKey && state.job) { setBig(!state.big); return; }
   if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key === 'Enter' && e.target.dataset && e.target.dataset.job) { go(state.project, e.target.dataset.job); return; }
   const p = project(state.project);
@@ -817,6 +1014,9 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'j' || e.key === 'ArrowDown') && order.length) { e.preventDefault(); go(p.name, order[Math.min(order.length - 1, i + 1)].id); }
   if ((e.key === 'k' || e.key === 'ArrowUp') && order.length) { e.preventDefault(); go(p.name, order[Math.max(0, i - 1)].id); }
   if (e.key === 'v') { state.view = state.view === 'via' ? 'table' : 'via'; renderHead(); renderBoard(); }
+  if (e.key === '[') fold('left');
+  if (e.key === ']') fold('right');
+  if (e.key === '\\') { const both = !(prefs.lfold && prefs.rfold); prefs.lfold = both; prefs.rfold = both; savePrefs(); applyPrefs(); afterFold(); }
 });
 $('#q').addEventListener('input', (e) => { state.q = e.target.value; renderBoard(); });
 $('#gear').addEventListener('click', (e) => { e.stopPropagation(); openSettings($('#sets').hidden); });
@@ -833,15 +1033,25 @@ $('#sets').addEventListener('click', (e) => {
 $('#sets').addEventListener('change', (e) => {
   const key = e.target.dataset.toggle;
   if (!key) return;
+  if (PANEL_TOGGLES[key]) { prefs[PANEL_TOGGLES[key]] = !e.target.checked; savePrefs(); applyPrefs(); afterFold(); return; }
   prefs[key] = e.target.checked;
   savePrefs(); applyPrefs(); renderBoard(); renderWork();
 });
 document.addEventListener('click', (e) => {
   if (!$('#sets').hidden && !e.target.closest('#sets, #gear')) openSettings(false);
 }, true);
+// the copy menu closes after a copy, on an outside click and on Escape
+function closeMenus(except) {
+  document.querySelectorAll('details.menu[open]').forEach((m) => { if (m !== except) m.open = false; });
+}
+document.addEventListener('click', (e) => closeMenus(e.target.closest && e.target.closest('details.menu')), true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenus(); }, true);
 window.addEventListener('hashchange', () => { if (state.data) { route(); renderAll(); } });
 setInterval(renderTimersOnly, 1000);
 
 try { localStorage.setItem('legio-skin', 'principia'); } catch (_) { /* ignore */ }
 applyPrefs();
+if (prefs.detailH) $('#mid').style.setProperty('--dh', `${prefs.detailH}px`);
+if (prefs.storyW) $('#detail').style.setProperty('--sw', `${prefs.storyW}px`);
+window.addEventListener('resize', () => { if (prefs.detailH) $('#mid').style.setProperty('--dh', `${clampDetail(prefs.detailH)}px`); });
 poll();
