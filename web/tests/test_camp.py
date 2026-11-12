@@ -448,6 +448,156 @@ class LegatusHttp(Fixture):
         self.assertFalse(SERVE.make_legatus(str(self.root), False, False, None).enabled)
 
 
+class HostAndActions(Fixture):
+    """The Host allowlist on every request, and the operator-confirmed actions.
+
+    `legio` and `.centuria/bin/job` are fakes that only log what they were asked.
+    """
+
+    def setUp(self):
+        super().setUp()
+        fake = WEB / "tests" / "fake_cli.py"
+        self.project("alpha", jobs=[
+            a_job(id="001-waits", stage="needs-human", waiting=True, active=False),
+            a_job(id="002-asks", stage="needs-info", waiting=True, active=False),
+            a_job(id="003-builds", stage="build"),
+        ])
+        job_bin = self.root / "alpha" / ".centuria" / "bin" / "job"
+        job_bin.write_text(f"#!/bin/sh\nexec {sys.executable} {fake} \"$@\"\n")
+        job_bin.chmod(0o755)
+        (self.root / "plain" / ".git").mkdir(parents=True)
+        self.log = self.root / "cli.jsonl"
+        os.environ["FAKE_CLI_LOG"] = str(self.log)
+        self.addCleanup(os.environ.pop, "FAKE_CLI_LOG", None)
+        self.addCleanup(os.environ.pop, "FAKE_CLI_EXIT", None)
+        actions = SERVE.Actions(str(self.root), legio=[sys.executable, str(fake)])
+        self.httpd = SERVE.build_server(0, demo=False, root=str(self.root), actions=actions)
+        self.port = self.httpd.server_port
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=3)
+
+    def call(self, method, path, body=None, host=None, origin="same"):
+        headers = {}
+        if host:
+            headers["Host"] = host
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+            if origin == "same":
+                headers["Origin"] = f"http://127.0.0.1:{self.port}"
+            elif origin:
+                headers["Origin"] = origin
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.request(method, path, body=None if body is None else json.dumps(body),
+                         headers=headers)
+            response = conn.getresponse()
+            raw = response.read()
+            try:
+                return response.status, json.loads(raw)
+            except ValueError:
+                return response.status, raw
+        finally:
+            conn.close()
+
+    def token(self):
+        return self.call("GET", "/api/actions")[1]["token"]
+
+    def calls(self):
+        return [json.loads(l) for l in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_every_request_must_be_addressed_to_this_machine(self):
+        for path in ("/api/camp", "/api/actions", "/principia/", "/api/job?project=alpha&job=001-waits"):
+            status, _ = self.call("GET", path, host="evil.example:8766")
+            self.assertEqual(status, 403, path)
+        status, _ = self.call("GET", "/api/camp", host=f"localhost:{self.port}")
+        self.assertEqual(status, 200)
+        status, _ = self.call("POST", "/api/action",
+                              {"token": self.token(), "action": "reject", "project": "alpha", "job": "001-waits"},
+                              host="evil.example:8766", origin="http://evil.example:8766")
+        self.assertEqual(status, 403)
+        self.assertEqual(self.calls(), [])
+
+    def test_actions_payload_lists_hosts_without_fake(self):
+        status, data = self.call("GET", "/api/actions")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["enabled"])
+        names = [h["name"] for h in data["hosts"]]
+        self.assertIn("claude-code", names)
+        self.assertNotIn("fake", names)
+        self.assertEqual(data["default_host"], "claude-code")
+
+    def test_station_runs_legio_add_for_an_uncharted_repo_only(self):
+        token = self.token()
+        status, data = self.call("POST", "/api/action", {"token": token, "action": "station",
+                                                         "path": str(self.root / "plain"), "host": "claude-code"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(self.calls()[-1]["argv"], ["add", str(self.root / "plain"), "--host", "claude-code"])
+        for path, host in ((str(self.root / "alpha"), "claude-code"),
+                           ("/etc", "claude-code"),
+                           (str(self.root / "plain"), "fake")):
+            status, _ = self.call("POST", "/api/action", {"token": token, "action": "station",
+                                                          "path": path, "host": host})
+            self.assertEqual(status, 400, (path, host))
+        self.assertEqual(len(self.calls()), 1)
+
+    def test_feedback_goes_to_the_job_binary_on_stdin(self):
+        status, data = self.call("POST", "/api/action", {
+            "token": self.token(), "action": "say", "project": "alpha", "job": "001-waits",
+            "text": "--host fake; stack the banner"})
+        self.assertEqual(status, 200)
+        call = self.calls()[-1]
+        self.assertEqual(call["argv"], ["feedback", "001-waits"])
+        self.assertEqual(call["stdin"], "--host fake; stack the banner\n")
+        self.assertEqual(Path(call["cwd"]).resolve(), (self.root / "alpha").resolve())
+        self.assertEqual(data["command"], "legio say alpha:001-waits")
+
+    def test_stage_and_target_rules(self):
+        token = self.token()
+        cases = [
+            ({"action": "say", "project": "alpha", "job": "002-asks", "text": "x"}, 409),
+            ({"action": "say", "project": "alpha", "job": "001-waits", "text": ""}, 400),
+            ({"action": "reject", "project": "alpha", "job": "003-builds"}, 409),
+            ({"action": "reject", "project": "alpha", "job": "999-nope"}, 404),
+            ({"action": "reject", "project": "nope", "job": "001-waits"}, 404),
+            ({"action": "merge", "project": "alpha", "job": "001-waits"}, 400),
+        ]
+        for body, expected in cases:
+            status, _ = self.call("POST", "/api/action", {"token": token, **body})
+            self.assertEqual(status, expected, body)
+        self.assertEqual(self.calls(), [])
+        status, data = self.call("POST", "/api/action", {"token": token, "action": "reject",
+                                                         "project": "alpha", "job": "002-asks"})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.calls()[-1]["stdin"], "rejected by the operator\n")
+
+    def test_a_failing_command_is_reported(self):
+        os.environ["FAKE_CLI_EXIT"] = "1"
+        status, data = self.call("POST", "/api/action", {
+            "token": self.token(), "action": "reject", "project": "alpha", "job": "001-waits", "text": "no"})
+        self.assertEqual(status, 200)
+        self.assertFalse(data["ok"])
+        self.assertEqual(data["code"], 1)
+        self.assertIn("fake cli", data["output"])
+
+    def test_actions_need_the_token_and_are_off_in_demo(self):
+        status, _ = self.call("POST", "/api/action", {"token": "nope", "action": "reject",
+                                                      "project": "alpha", "job": "001-waits"})
+        self.assertEqual(status, 403)
+        demo = SERVE.build_server(0, demo=True, root=None)
+        try:
+            self.assertFalse(demo.actions.payload()["enabled"])
+        finally:
+            demo.server_close()
+        self.assertEqual(self.calls(), [])
+
+
 class Assets(unittest.TestCase):
     def test_manifest_and_files_exist(self):
         assets = WEB / "assets"

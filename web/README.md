@@ -19,6 +19,7 @@ python3 web/serve.py            # http://127.0.0.1:8766 — the real camp
 python3 web/serve.py --demo     # a fake camp (four projects), for design work
 python3 web/serve.py --port 9000 --root ~/dev
 python3 web/serve.py --no-legatus             # without the agent panel
+python3 web/serve.py --no-actions             # no buttons that change anything
 python3 web/serve.py --legatus-model claude-sonnet-5-5
 ```
 
@@ -34,8 +35,8 @@ choice is kept in the browser (`localStorage["legio-skin"]`), and
 
 - **Left:** every stationed project as a tent with its numeral, counts and a
   waiting / active / done bar. Under it, *Terra incognita*: git repositories
-  under the projects root without a centuria. Clicking one copies
-  `legio add <path>`.
+  under the projects root without a centuria. Clicking one opens a confirm
+  step that stations it (`legio add <path> --host <host>`).
 - **Middle:** the selected project's open jobs, one row each, on a progress
   track across the stages (intake → merged) with the role at work, the round
   bars and what is happening now; finished jobs below. *Table* switches to a
@@ -52,8 +53,12 @@ choice is kept in the browser (`localStorage["legio-skin"]`), and
   *Plain*), density, Latin or English labels, animations, the desk scene,
   costs and finished jobs. Saved per browser.
 
-Every action is a **copied command** (`gh pr merge 9`, `legio say legio:003
-"…"`, `legio reject …`) for you to run; the page itself stays read-only.
+Three things can be **done** from the page, each after a confirm step that
+shows the exact command: station a repo, send feedback to a job that needs
+you, reject a waiting job (see *Actions* below). Everything else, merging
+included, is a **copied command** (`gh pr merge 9`) for you to run.
+Legatus's suggested commands get a **Run…** button when they are one of
+those three; it opens the same confirm step.
 Keys: `⌘K` filter, `j`/`k` move between jobs, `v` Via/Table, `Esc` closes
 settings. Deep links: `#/legion/<name>` and `#/legion/<name>/job/<id>`.
 
@@ -138,6 +143,30 @@ The endpoints only answer this page: `POST /api/legatus/ask` and
 one, an `Origin` equal to this server. One question runs at a time (409 while
 busy); answers can take a few minutes (600 s limit).
 
+## Actions (confirmed, run by the CLI)
+
+| action | from | runs | allowed when |
+|---|---|---|---|
+| station | *Terra incognita* | `./legio add <path> --host <host>` (cwd: legio) | the path is one the server listed as uncharted; the host is in `hosts/` and is not `fake` |
+| feedback | job header, Legatus | `.centuria/bin/job feedback <id>` with the text on stdin (what `legio say` runs) | the job is `needs-human` |
+| reject | job header, Legatus | `.centuria/bin/job reject <id>` with the reason on stdin (what `legio reject` runs) | the job is `needs-info` or `needs-human` |
+
+The page never edits a project itself: the pipeline's own guards still
+apply, and the text goes on stdin so nothing in it can be read as an option.
+Merging is never an action. `POST /api/action` takes the same guard as
+Legatus (JSON, the per-start token, a matching `Origin`), one at a time, 120 s
+limit, and returns `{ok, code, command, output}` (last 40 lines). Off in
+`--demo` and with `--no-actions`. `GET /api/actions` lists the hosts.
+
+## Who may talk to the server
+
+Every request must be addressed to `127.0.0.1`, `localhost` or `[::1]` (the
+`Host` header), or it gets 403. That stops DNS rebinding, where a hostile site
+points its own name at your machine to read the dashboard. Every POST also
+needs JSON, the per-start token (from `GET /api/actions` or `/api/legatus`,
+which other sites cannot read) and, when the browser sends one, an `Origin`
+equal to this server.
+
 ## Data (read-only, by construction)
 
 `serve.py` discovers `*/​.centuria/config.json` under `projects_root` (from
@@ -153,9 +182,10 @@ legio's `config.json`, or `--root`), then for each project:
 
 `GET /api/camp` also lists `uncharted`: `{name, path}` of git repositories
 under the root that have no centuria (nothing inside them is read). With the
-two scroll endpoints above and Legatus's three, these are the only routes;
-every other method is 405. The only POSTs are Legatus's, and the only process
-besides `centuria view` is his `claude -p`.
+two scroll endpoints above, Legatus's three and the two action ones, these
+are the only routes; every other method is 405. The only POSTs are Legatus's
+and `/api/action`; the only processes besides `centuria view` are his
+`claude -p` and the confirmed action commands.
 
 ### The heartbeat
 
@@ -210,7 +240,7 @@ broken images, so commit the output of the script when it changes.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s web/tests -v      # 28 tests, no network (Legatus uses tests/fake_claude.py)
+python3 -m unittest discover -s web/tests -v      # 35 tests, no network (fakes: tests/fake_claude.py, tests/fake_cli.py)
 python3 -m unittest tests.test_live_heartbeat -v  # the runner's heartbeat
 ```
 
