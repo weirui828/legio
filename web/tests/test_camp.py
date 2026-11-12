@@ -159,6 +159,17 @@ class Discovery(Fixture):
     def test_empty_root_is_an_empty_camp(self):
         camp = SERVE.real_camp(str(self.root))
         self.assertEqual(camp["projects"], [])
+        self.assertEqual(camp["uncharted"], [])
+
+    def test_uncharted_lists_git_repos_without_a_centuria(self):
+        self.project("alpha")
+        (self.root / "alpha" / ".git").mkdir()
+        (self.root / "plain" / ".git").mkdir(parents=True)
+        (self.root / "notes").mkdir()
+        (self.root / ".hidden" / ".git").mkdir(parents=True)
+        camp = SERVE.real_camp(str(self.root))
+        self.assertEqual([u["name"] for u in camp["uncharted"]], ["plain"])
+        self.assertEqual(camp["uncharted"][0]["path"], str(self.root / "plain"))
 
 
 class Demo(unittest.TestCase):
@@ -177,6 +188,7 @@ class Demo(unittest.TestCase):
         self.assertEqual(len(legio["cast"]), 8)
         broken = camp["projects"][-1]
         self.assertFalse(broken["ok"])
+        self.assertTrue(camp["uncharted"])
 
 
 class Http(Fixture):
@@ -229,6 +241,30 @@ class Http(Fixture):
             status, actual, _ = self.request(path)
             self.assertEqual(status, 200, path)
             self.assertTrue(actual.startswith(ctype), (path, actual))
+
+    def test_principia_skin_is_served(self):
+        for path, ctype in (("/principia/", "text/html"),
+                            ("/principia/app.js", "text/javascript"),
+                            ("/principia/styles.css", "text/css")):
+            status, actual, body = self.request(path)
+            self.assertEqual(status, 200, path)
+            self.assertTrue(actual.startswith(ctype), (path, actual))
+        _, _, page = self.request("/principia/")
+        self.assertIn(b"Legio Principia", page)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            conn.request("GET", "/principia")
+            response = conn.getresponse()
+            response.read()
+            self.assertEqual(response.status, 301)
+            self.assertEqual(response.getheader("Location"), "/principia/")
+        finally:
+            conn.close()
+
+    def test_the_camp_defaults_to_principia(self):
+        _, _, page = self.request("/")
+        self.assertIn(b"location.replace('principia/')", page)
+        self.assertIn(b"skin=camp", page)
 
     def test_scrolls_are_listed_and_read(self):
         status, _, body = self.request("/api/job?project=alpha&job=001-example")

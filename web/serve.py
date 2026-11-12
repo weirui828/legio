@@ -5,7 +5,9 @@
     python3 web/serve.py --demo          # a fake camp, for design work
     python3 web/serve.py --port 8766 --root ~/dev
 
-Serves web/ as static files and `GET /api/camp` as JSON. Strictly read-only:
+Serves web/ as static files (two skins: Principia at /principia/, the
+default, and the original illustrated camp at /) and `GET /api/camp` as JSON.
+Strictly read-only:
 it never writes to a project, never runs an agent and never transitions a job.
 Standard library only; the only thing it shells out to is `centuria view`.
 """
@@ -268,13 +270,34 @@ def project_payload(path: Path) -> dict:
     }
 
 
+def find_uncharted(base: Path) -> list[dict]:
+    """Git repositories under the root that have no centuria yet.
+
+    Only names and paths: the dashboard shows them so you can station one
+    (`legio add <path>`); it never looks inside them.
+    """
+    found = []
+    if not base.is_dir():
+        return found
+    for child in sorted(base.iterdir()):
+        try:
+            if (child.is_dir() and not child.name.startswith(".")
+                    and (child / ".git").exists()
+                    and not (child / ".centuria" / "config.json").is_file()):
+                found.append({"name": child.name, "path": str(child)})
+        except OSError:
+            continue
+    return found
+
+
 def real_camp(root: str | None) -> dict:
     base = projects_root(root)
     projects = []
     if base.is_dir():
         for config in sorted(base.glob("*/.centuria/config.json")):
             projects.append(project_payload(config.parent.parent))
-    return {"generated_at": now_iso(), "demo": False, "projects": projects}
+    return {"generated_at": now_iso(), "demo": False, "projects": projects,
+            "uncharted": find_uncharted(base)}
 
 
 # ---- demo camp -------------------------------------------------------------
@@ -322,8 +345,8 @@ def demo_camp() -> dict:
                     demo_job("008-count-the-camp", 9, "Count the whole camp",
                              "gate", active=True),
                     demo_job("003-add-ui-to-legio", 4, "Add UI to legio",
-                             "needs-human", waiting=True,
-                             reviews={"probator": "PASS", "mensor": "CHANGES"},
+                             "needs-human", waiting=True, round=2, pr=9,
+                             reviews={"probator": "PASS", "mensor": "PASS"},
                              gate="PASS", human_reason="approved - merge the PR", cost=1.42),
                     demo_job("001-add-a-json-flag", 1, "Add a --json flag to legio hosts",
                              "merged", pr=2, gate="PASS", terminal=True,
@@ -367,6 +390,8 @@ def demo_camp() -> dict:
                 "lives": [],
             },
         ],
+        "uncharted": [{"name": name, "path": f"~/dev/{name}"}
+                      for name in ("blog", "dotfiles", "notes-api")],
     }
 
 
@@ -381,6 +406,28 @@ DEMO_SCROLLS = {
                              "Ran 15 tests ... OK\n",
         "round-1/review-probator.md": "VERDICT: PASS\n\nIn scope and tested.\n",
         "agent-1-fabri.log": "$ codex exec ...\n--- stdout ---\nwrote web/, 43 assets, 15 tests\n",
+    },
+    "003-add-ui-to-legio": {
+        "issue.md": "# Issue #4: Add UI to legio\n\nA local read-only page for every centuria.\n",
+        "intake.md": "DECISION: ACCEPT\nRISK: low\nSURFACES: ui\nRESCOPED: no\n\n"
+                     "Small, self-contained change in web/.\n",
+        "spec.md": "SPEC: READY\n\n## Goals\n- serve.py on 127.0.0.1\n"
+                   "- GET /api/camp, read-only\n## Non-goals\n- No write endpoints\n",
+        "build.md": "STATUS: READY\n\n## Round 2\n- Fixed the two failing tests.\n",
+        "round-1/checks.md": "GATE: FAIL\nCOMMIT: 1c07f9e\n\nRan 15 tests, 2 failures\n",
+        "round-2/checks.md": "GATE: PASS\nCOMMIT: 4b81d0a\n\nRan 15 tests ... OK\n",
+        "round-2/review-probator.md": "VERDICT: PASS\n\nRead-only by construction.\n",
+        "round-2/review-mensor.md": "VERDICT: PASS\n\nLabels no longer overlap.\n",
+        "decision.md": "APPROVE\n\nChecks and both reviews pass; merge PR #9 when ready.\n",
+    },
+    "007-name-the-tents": {
+        "issue.md": "# Issue #8: Name every tent\n\nEach tent shows its project name.\n",
+        "intake.md": "DECISION: ACCEPT\nRISK: low\nSURFACES: ui\nRESCOPED: no\n",
+        "spec.md": "SPEC: READY\n\n- A banner over every tent.\n",
+        "build.md": "STATUS: READY\n\nBanners added.\n",
+        "round-1/checks.md": "GATE: PASS\nCOMMIT: 77aa012\n\nOK\n",
+        "round-1/review-probator.md": "VERDICT: PASS\n\nLooks right.\n",
+        "round-1/review-mensor.md": "VERDICT: CHANGES\n\nThe banner wraps on narrow tents.\n",
     },
 }
 
@@ -434,6 +481,14 @@ class Handler(BaseHTTPRequestHandler):
         if WEB.resolve() not in candidate.parents and candidate != WEB.resolve():
             self.reply(404, b"not found", "text/plain; charset=utf-8")
             return
+        if candidate.is_dir() and (candidate / "index.html").is_file():
+            if not path.endswith("/"):
+                self.send_response(301)
+                self.send_header("Location", path + "/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            candidate = candidate / "index.html"
         if not candidate.is_file():
             self.reply(404, b"not found", "text/plain; charset=utf-8")
             return

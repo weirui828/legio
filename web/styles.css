@@ -1272,6 +1272,11 @@ a { color: inherit; }
 .modal-sub { margin: 0 0 12px; color: var(--ink-2); font-size: 12px; }
 .modal-h3 { margin: 14px 0 6px; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brick); }
 .modal-prose p { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; }
+.skin-switch {
+  font: inherit; font-weight: 700; color: var(--ink); background: var(--glow);
+  border: 1.5px solid var(--ink); border-radius: 999px; padding: 1px 10px; cursor: pointer;
+}
+.skin-switch:hover { background: var(--peach); }
 .modal-prose kbd {
   display: inline-block;
   padding: 1px 6px;
