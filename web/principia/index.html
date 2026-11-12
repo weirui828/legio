@@ -37,18 +37,20 @@
       <div class="sec"><div class="label"><span class="eh"><img src="../assets/mascot-eagle.webp" alt="" class="eagle"><span class="la">NUNTII · NEEDS YOU</span><span class="en">NEEDS YOU</span></span> <em id="nneed"></em><button class="fold" type="button" data-fold="right" title="Hide this panel ( ] )" aria-label="Hide needs you, at work and Legatus" aria-expanded="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></div><div id="needs"></div></div>
       <div class="sec"><div class="label">AT WORK <em id="nwork"></em></div><div id="desk"></div><div id="work"></div></div>
       <div class="chat">
-        <div class="label"><span class="eh"><span class="lgface" aria-hidden="true"></span>LEGATUS</span> <em>your legio agent</em></div>
+        <div class="label"><span class="eh"><span class="lgface" aria-hidden="true"></span>LEGATUS</span> <em class="lgmodel">your legio agent</em><button class="fold" type="button" data-legatus-reset title="Start a new conversation" aria-label="Start a new conversation" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v2.8h2.8"/></svg></button></div>
         <div class="msgs" id="msgs" aria-live="polite"></div>
-        <div class="soon">Talking to Legatus comes later. For now he reports what changed while this page is open.</div>
+        <form class="ask" data-ask hidden><textarea rows="1" placeholder="Ask Legatus about your camp…" aria-label="Message Legatus"></textarea><button type="submit">Send</button></form>
+        <div class="soon" data-legatus-off>Connecting to Legatus…</div>
       </div>
     </aside>
   </div>
 </div>
 <div class="scrim" id="scrim" hidden></div>
 <section class="lgwin" id="lgwin" role="dialog" aria-label="Legatus" hidden>
-  <div class="lgwin-head"><span class="lgface" aria-hidden="true"></span><div><b>Legatus</b><span>your legio agent</span></div><button class="fold" type="button" data-legatus-close aria-label="Close the Legatus window" title="Close (Esc)">×</button></div>
+  <div class="lgwin-head"><span class="lgface" aria-hidden="true"></span><div><b>Legatus</b><span class="lgmodel">your legio agent</span></div><button class="fold" type="button" data-legatus-reset title="Start a new conversation" aria-label="Start a new conversation" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a5 5 0 1 0 1.6-3.7M3 2.5v2.8h2.8"/></svg></button><button class="fold" type="button" data-legatus-close aria-label="Close the Legatus window" title="Close (Esc)">×</button></div>
   <div class="msgs" id="lgmsgs" aria-live="polite"></div>
-  <div class="soon">Talking to Legatus comes later. For now he reports what changed while this page is open.</div>
+  <form class="ask" data-ask hidden><textarea rows="1" placeholder="Ask Legatus about your camp…" aria-label="Message Legatus"></textarea><button type="submit">Send</button></form>
+        <div class="soon" data-legatus-off>Connecting to Legatus…</div>
 </section>
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="app.js" defer></script>

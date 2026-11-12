@@ -7,7 +7,10 @@
 
 Serves web/ as static files (two skins: Principia at /principia/, the
 default, and the original illustrated camp at /) and `GET /api/camp` as JSON.
-Strictly read-only:
+The one exception to read-only is Legatus (`/api/legatus*`): it runs
+`claude -p` with read-only tools so the operator can ask about the camp; it
+writes only its own conversation state under `.legatus/`. Everything else is
+strictly read-only:
 it never writes to a project, never runs an agent and never transitions a job.
 Standard library only; the only thing it shells out to is `centuria view`.
 """
@@ -18,9 +21,13 @@ import argparse
 import fnmatch
 import json
 import re
+import secrets
+import shutil
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -442,6 +449,178 @@ def demo_job_payload(name: str, job: str) -> dict:
     return {"project": name, "job": job, "files": files}
 
 
+# ---- Legatus: the operator's agent ------------------------------------------
+#
+# The only part of the server that runs a process or writes a file. It runs
+# Claude Code non-interactively (`claude -p`) on the operator's own login, in
+# the legio checkout, with read-only tools; it never acts on a project. Its
+# state (one conversation id + the transcript) lives in .legatus/ in the
+# legio checkout, which git ignores.
+
+LEGATUS_MODEL = "claude-opus-5-5"
+LEGATUS_TIMEOUT = 600            # seconds per answer
+LEGATUS_MAX_CHARS = 8000         # per question
+LEGATUS_STATE = REPO / ".legatus"
+LEGATUS_ROLE = WEB / "legatus.md"
+# read-only: files, and commands that only look
+LEGATUS_TOOLS = (
+    "Read", "Glob", "Grep",
+    "Bash(./legio status:*)", "Bash(./legio inbox:*)", "Bash(./legio ls:*)",
+    "Bash(./legio hosts:*)", "Bash(./legio next:*)", "Bash(./legio doctor:*)",
+    "Bash(./legio version:*)",
+    "Bash(git log:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git show:*)",
+    "Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr diff:*)",
+    "Bash(gh issue view:*)", "Bash(gh issue list:*)",
+)
+LEGATUS_DENY = ("Write", "Edit", "NotebookEdit")
+
+
+class LegatusBusy(Exception):
+    pass
+
+
+def legatus_config() -> dict:
+    try:
+        cfg = json.loads((REPO / "config.json").read_text()).get("legatus")
+    except (OSError, ValueError, AttributeError):
+        cfg = None
+    return cfg if isinstance(cfg, dict) else {}
+
+
+class Legatus:
+    """One ongoing Claude Code conversation, asked one question at a time."""
+
+    def __init__(self, root: str | None, *, command=None, model: str | None = None,
+                 state_dir: Path | None = None, enabled: bool = True,
+                 reason: str | None = None):
+        self.root = root
+        self.command = list(command or ["claude"])
+        self.model = model or LEGATUS_MODEL
+        self.state_dir = Path(state_dir or LEGATUS_STATE)
+        self.enabled = enabled
+        self.reason = reason
+        self.token = secrets.token_urlsafe(24)   # only a same-origin page can read it
+        self.lock = threading.Lock()
+
+    @classmethod
+    def off(cls, reason: str) -> "Legatus":
+        return cls(None, enabled=False, reason=reason)
+
+    # -- state
+    def _read(self, name, default):
+        try:
+            return json.loads((self.state_dir / name).read_text())
+        except (OSError, ValueError):
+            return default
+
+    def _write(self, name, data):
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.state_dir / f"{name}.tmp"
+        tmp.write_text(json.dumps(data, indent=1))
+        tmp.replace(self.state_dir / name)
+
+    def session(self) -> dict:
+        found = self._read("session.json", None)
+        if isinstance(found, dict) and found.get("id"):
+            return found
+        fresh = {"id": str(uuid.uuid4()), "started": False}
+        self._write("session.json", fresh)
+        return fresh
+
+    def transcript(self) -> list:
+        found = self._read("transcript.json", [])
+        return found if isinstance(found, list) else []
+
+    def payload(self) -> dict:
+        return {"enabled": self.enabled, "reason": self.reason, "model": self.model,
+                "busy": self.lock.locked(), "token": self.token if self.enabled else None,
+                "messages": self.transcript()[-200:] if self.enabled else []}
+
+    # -- talking
+    def argv(self, session: dict) -> list[str]:
+        cmd = [*self.command, "-p", "--output-format", "json", "--model", self.model,
+               "--append-system-prompt-file", str(LEGATUS_ROLE),
+               "--permission-mode", "default"]
+        cmd += ["--resume", session["id"]] if session.get("started") else ["--session-id", session["id"]]
+        cmd += ["--add-dir", str(projects_root(self.root))]
+        cmd += ["--allowedTools", *LEGATUS_TOOLS]
+        cmd += ["--disallowedTools", *LEGATUS_DENY]
+        return cmd
+
+    def _run(self, session: dict, prompt: str) -> tuple[bool, str, float | None]:
+        try:
+            res = subprocess.run(self.argv(session), input=prompt, cwd=str(REPO),
+                                 capture_output=True, text=True, timeout=LEGATUS_TIMEOUT)
+        except FileNotFoundError:
+            return False, f"`{self.command[0]}` is not installed or not on PATH.", None
+        except subprocess.TimeoutExpired:
+            return False, f"No answer within {LEGATUS_TIMEOUT // 60} minutes.", None
+        data = None
+        for line in reversed(res.stdout.strip().splitlines()):
+            try:
+                data = json.loads(line)
+                break
+            except ValueError:
+                continue
+        if isinstance(data, dict) and not data.get("is_error") and isinstance(data.get("result"), str):
+            cost = data.get("total_cost_usd")
+            return True, data["result"], cost if isinstance(cost, (int, float)) else None
+        detail = (data or {}).get("result") if isinstance(data, dict) else None
+        if not detail:
+            lines = (res.stderr or res.stdout).strip().splitlines()
+            detail = lines[-1] if lines else f"claude exited with {res.returncode}"
+        return False, str(detail), None
+
+    def ask(self, text: str, context: str = "") -> dict:
+        if not self.lock.acquire(blocking=False):
+            raise LegatusBusy()
+        try:
+            session = self.session()
+            prompt = (f"Context: {context}\n\n" if context else "") + text
+            started = time.time()
+            ok, answer, cost = self._run(session, prompt)
+            if not ok and session.get("started") and "conversation" in answer.lower():
+                session = {"id": str(uuid.uuid4()), "started": False}   # the old one is gone
+                ok, answer, cost = self._run(session, prompt)
+            if ok:
+                session["started"] = True
+            self._write("session.json", session)
+            reply = {"role": "legatus" if ok else "error", "text": answer,
+                     "at": int(time.time() * 1000),
+                     "seconds": round(time.time() - started, 1)}
+            if cost is not None:
+                reply["cost_usd"] = cost
+            log = self.transcript()
+            log.append({"role": "user", "text": text, "context": context,
+                        "at": int(started * 1000)})
+            log.append(reply)
+            self._write("transcript.json", log[-400:])
+            return reply
+        finally:
+            self.lock.release()
+
+    def reset(self) -> None:
+        if not self.lock.acquire(blocking=False):
+            raise LegatusBusy()
+        try:
+            self._write("session.json", {"id": str(uuid.uuid4()), "started": False})
+            self._write("transcript.json", [])
+        finally:
+            self.lock.release()
+
+
+def make_legatus(root: str | None, demo: bool, wanted: bool, model: str | None) -> Legatus:
+    if not wanted:
+        return Legatus.off("Legatus is turned off (--no-legatus).")
+    if demo:
+        return Legatus.off("Legatus is off in demo mode: he would read your real projects.")
+    cfg = legatus_config()
+    command = cfg.get("command") if isinstance(cfg.get("command"), list) else ["claude"]
+    if not shutil.which(command[0]):
+        return Legatus.off(f"`{command[0]}` was not found on PATH. Install Claude Code and sign in.")
+    return Legatus(root, command=command, model=model or cfg.get("model") or LEGATUS_MODEL)
+
+
 # ---- http ------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -462,6 +641,10 @@ class Handler(BaseHTTPRequestHandler):
         target = urlsplit(self.path)
         if target.path in ("/api/job", "/api/job/file"):
             self.serve_scroll(target)
+            return
+        if target.path == "/api/legatus":
+            self.reply(200, json.dumps(self.server.legatus.payload()).encode(),
+                       "application/json")
             return
         if target.path == "/api/camp":
             try:
@@ -541,14 +724,76 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(405, b'{"error":{"code":"method_not_allowed"}}',
                    "application/json")
 
-    do_POST = do_PUT = do_PATCH = do_DELETE = unsupported
+    def fail(self, status: int, code: str, message: str):
+        self.reply(status, json.dumps({"error": {"code": code, "message": message}}).encode(),
+                   "application/json")
+
+    def do_POST(self):
+        """Only Legatus takes a POST, and only from this dashboard's own page."""
+        target = urlsplit(self.path)
+        if target.path not in ("/api/legatus/ask", "/api/legatus/reset"):
+            self.unsupported()
+            return
+        legatus = self.server.legatus
+        host = self.headers.get("Host", "")
+        origin = self.headers.get("Origin")
+        if (not re.fullmatch(r"(127\.0\.0\.1|localhost|\[::1\]):\d+", host)
+                or (origin is not None and origin != f"http://{host}")):
+            self.fail(403, "forbidden", "Legatus only answers this dashboard's own page.")
+            return
+        if not (self.headers.get("Content-Type") or "").startswith("application/json"):
+            self.fail(415, "json_only", "Send JSON.")
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > 4 * LEGATUS_MAX_CHARS:
+            self.fail(400, "bad_body", "Empty or too long.")
+            return
+        try:
+            body = json.loads(self.rfile.read(length))
+        except ValueError:
+            self.fail(400, "bad_body", "Not JSON.")
+            return
+        if not isinstance(body, dict):
+            self.fail(400, "bad_body", "Not a JSON object.")
+            return
+        if not legatus.enabled:
+            self.fail(503, "legatus_off", legatus.reason or "Legatus is off.")
+            return
+        if not secrets.compare_digest(str(body.get("token", "")), legatus.token):
+            self.fail(403, "bad_token", "Reload the page and try again.")
+            return
+        try:
+            if target.path == "/api/legatus/reset":
+                legatus.reset()
+                self.reply(200, json.dumps({"ok": True}).encode(), "application/json")
+                return
+            text = str(body.get("text", "")).strip()
+            if not text or len(text) > LEGATUS_MAX_CHARS:
+                self.fail(400, "bad_text", f"Ask something up to {LEGATUS_MAX_CHARS} characters long.")
+                return
+            context = str(body.get("context", ""))[:300]
+            reply = legatus.ask(text, context)
+        except LegatusBusy:
+            self.fail(409, "busy", "Legatus is still answering the last question.")
+            return
+        except OSError as exc:
+            self.fail(502, "legatus_failed", str(exc))
+            return
+        self.reply(200, json.dumps({"message": reply}).encode(), "application/json")
+
+    do_PUT = do_PATCH = do_DELETE = unsupported
     do_OPTIONS = do_TRACE = do_CONNECT = unsupported
 
 
-def build_server(port: int, demo: bool, root: str | None) -> ThreadingHTTPServer:
+def build_server(port: int, demo: bool, root: str | None,
+                 legatus: Legatus | None = None) -> ThreadingHTTPServer:
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.demo = demo
     httpd.root = root
+    httpd.legatus = legatus or Legatus.off("Legatus is not set up on this server.")
     return httpd
 
 
@@ -559,14 +804,20 @@ def main(argv: list[str]) -> None:
                         help="projects root (default: config.json projects_root)")
     parser.add_argument("--demo", action="store_true",
                         help="serve a fake camp instead of reading projects")
+    parser.add_argument("--no-legatus", action="store_true",
+                        help="turn off Legatus (the claude-backed agent panel)")
+    parser.add_argument("--legatus-model", default=None,
+                        help=f"model for Legatus (default: config.json legatus.model or {LEGATUS_MODEL})")
     args = parser.parse_args(argv)
+    legatus = make_legatus(args.root, args.demo, not args.no_legatus, args.legatus_model)
     try:
-        httpd = build_server(args.port, args.demo, args.root)
+        httpd = build_server(args.port, args.demo, args.root, legatus)
     except OSError as exc:
         print(f"camp: could not bind 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
         raise SystemExit(1)
     mode = "demo data" if args.demo else f"projects under {projects_root(args.root)}"
     print(f"Camp Legio on http://127.0.0.1:{httpd.server_port}  ({mode})")
+    print(f"Legatus: {legatus.model}" if legatus.enabled else f"Legatus: off. {legatus.reason}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -1,4 +1,7 @@
 {
   "projects_root": "~/dev",
-  "stale_minutes": 240
+  "stale_minutes": 240,
+  "legatus": {
+    "model": "claude-opus-5-5"
+  }
 }
