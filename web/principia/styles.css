@@ -378,6 +378,26 @@ body.resizing-x { cursor: col-resize; user-select: none; }
 .soon { padding: 10px 14px 12px; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-3); }
 .lgmodel { white-space: nowrap; }
 .fold.armed { color: var(--red); border-color: var(--red); background: var(--red-bg); }
+
+/* confirm dialogs for the actions that change something */
+.dialog { position: fixed; z-index: 37; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(500px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; background: var(--raised); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 24px 60px rgba(78, 49, 39, .24), 0 4px 12px rgba(78, 49, 39, .1); padding: 18px 20px 16px; }
+body.dialog-open .scrim { z-index: 36; }
+.dialog h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; text-wrap: balance; }
+.dialog .lead { margin: 0 0 12px; color: var(--ink-2); font-size: 13px; }
+.dialog ul { margin: 0 0 12px; padding-left: 18px; color: var(--ink-2); font-size: 12.5px; }
+.dialog label { display: grid; gap: 5px; font-size: 12px; font-weight: 700; color: var(--ink-2); margin: 0 0 12px; }
+.dialog textarea, .dialog select { font: 13px/1.45 var(--sans); color: var(--ink); background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; padding: 8px 10px; }
+.dialog textarea { min-height: 96px; resize: vertical; }
+.dialog .will { display: grid; gap: 4px; margin: 0 0 14px; }
+.dialog .will span { font-size: 11px; color: var(--ink-3); }
+.dialog .will code { font: 12px/1.5 var(--mono); background: var(--sunk); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere; }
+.dialog .out { font: 11.5px/1.5 var(--mono); background: var(--red-bg); color: var(--red); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 12px; max-height: 180px; overflow: auto; }
+.dialog .err { color: var(--red); font-size: 12px; margin: -6px 0 10px; }
+.dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+.btn.danger { background: var(--red); border-color: var(--red); color: #fff; }
+.menu-list .sec-h { font: 400 10.5px var(--display); letter-spacing: .12em; color: var(--ink-3); padding: 6px 9px 2px; }
+.menu-list hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.msg .code .run { right: 52px; background: var(--ink); color: var(--bg); border-color: var(--ink); }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 12.5px; z-index: 40; max-width: calc(100vw - 32px); }
 
 /* ---- settings effects ---- */

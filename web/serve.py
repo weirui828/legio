@@ -7,10 +7,17 @@
 
 Serves web/ as static files (two skins: Principia at /principia/, the
 default, and the original illustrated camp at /) and `GET /api/camp` as JSON.
-The one exception to read-only is Legatus (`/api/legatus*`): it runs
-`claude -p` with read-only tools so the operator can ask about the camp; it
-writes only its own conversation state under `.legatus/`. Everything else is
-strictly read-only:
+Two guarded exceptions to read-only, both POST-only and only for this
+dashboard's own page (Host allowlist on every request, a per-start token and
+a matching Origin on every POST):
+
+- Legatus (`/api/legatus*`) runs `claude -p` with read-only tools so the
+  operator can ask about the camp; it writes only `.legatus/` here.
+- Actions (`/api/action`) are operator-confirmed CLI calls: station an
+  uncharted repo (`legio add`), send feedback to or reject a waiting job
+  (`.centuria/bin/job feedback|reject`). Never merge.
+
+Everything else is strictly read-only:
 it never writes to a project, never runs an agent and never transitions a job.
 Standard library only; the only thing it shells out to is `centuria view`.
 """
@@ -621,6 +628,128 @@ def make_legatus(root: str | None, demo: bool, wanted: bool, model: str | None) 
     return Legatus(root, command=command, model=model or cfg.get("model") or LEGATUS_MODEL)
 
 
+# ---- actions: operator-confirmed CLI calls -----------------------------------
+#
+# The dashboard never edits a project itself: each action runs the same CLI the
+# operator would type, so the pipeline's own guards (stage checks, locks,
+# "already stationed") still apply. Targets must be things the server found
+# itself. Merging is deliberately not an action (golden rule 2).
+
+ACTION_TIMEOUT = 120
+ACTION_TEXT_MAX = 4000
+STATION_HIDDEN_HOSTS = {"fake"}   # golden rule 9: never point fake at a real project
+
+
+def host_profiles() -> list[dict]:
+    out = []
+    for path in sorted((REPO / "hosts").glob("*.json")):
+        try:
+            prof = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        name = prof.get("host", path.stem) if isinstance(prof, dict) else path.stem
+        if name in STATION_HIDDEN_HOSTS or not isinstance(prof, dict):
+            continue
+        out.append({"name": name, "about": prof.get("about", ""),
+                    "untested": bool(prof.get("untested"))})
+    return out
+
+
+def find_project(root: str | None, name: str) -> Path | None:
+    base = projects_root(root)
+    if not base.is_dir():
+        return None
+    for config in sorted(base.glob("*/.centuria/config.json")):
+        if config.parent.parent.name == name:
+            return config.parent.parent
+    return None
+
+
+class ActionError(Exception):
+    def __init__(self, status: int, code: str, message: str):
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
+class Actions:
+    def __init__(self, root: str | None, *, legio=None, enabled: bool = True,
+                 reason: str | None = None):
+        self.root = root
+        self.legio = list(legio or [str(REPO / "legio")])
+        self.enabled = enabled
+        self.reason = reason
+        self.lock = threading.Lock()
+
+    def payload(self) -> dict:
+        hosts = host_profiles()
+        names = [h["name"] for h in hosts]
+        return {"enabled": self.enabled, "reason": self.reason, "hosts": hosts,
+                "default_host": "claude-code" if "claude-code" in names else (names[0] if names else None)}
+
+    def plan(self, body: dict) -> tuple[list[str], Path, str | None, str]:
+        """Check one request against what the server knows; return argv, cwd, stdin, label."""
+        action = body.get("action")
+        if action == "station":
+            path = str(body.get("path", ""))
+            host = str(body.get("host", ""))
+            if path not in {u["path"] for u in find_uncharted(projects_root(self.root))}:
+                raise ActionError(400, "not_uncharted",
+                                  "Only a repo listed under Terra incognita can be stationed.")
+            if host not in {h["name"] for h in host_profiles()}:
+                raise ActionError(400, "bad_host", f"Unknown host {host!r}.")
+            return ([*self.legio, "add", path, "--host", host], REPO, None,
+                    f"legio add {path} --host {host}")
+        if action in ("say", "reject"):
+            name = str(body.get("project", ""))
+            job_id = str(body.get("job", ""))
+            project = find_project(self.root, name)
+            if project is None or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", job_id):
+                raise ActionError(404, "not_found", "Unknown project or job.")
+            try:
+                jobs = read_jobs(project)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+                raise ActionError(502, "read_failed", str(exc)) from None
+            job = next((j for j in jobs if j.get("id") == job_id), None)
+            if job is None:
+                raise ActionError(404, "not_found", "Unknown job.")
+            text = str(body.get("text", "")).strip()
+            if len(text) > ACTION_TEXT_MAX:
+                raise ActionError(400, "bad_text", f"Keep it under {ACTION_TEXT_MAX} characters.")
+            if action == "say":
+                if job.get("stage") != "needs-human":
+                    raise ActionError(409, "wrong_stage",
+                                      f"Feedback only goes to a job that needs you (this one is {job.get('stage')}).")
+                if not text:
+                    raise ActionError(400, "bad_text", "Write the feedback first.")
+                verb = "feedback"
+            else:
+                if job.get("stage") not in ("needs-info", "needs-human"):
+                    raise ActionError(409, "wrong_stage",
+                                      f"Only a waiting job can be rejected (this one is {job.get('stage')}).")
+                text = text or "rejected by the operator"
+                verb = "reject"
+            bin_job = project / ".centuria" / "bin" / "job"
+            return ([str(bin_job), verb, job_id], project, text + "\n",
+                    f"legio {'say' if action == 'say' else 'reject'} {name}:{job_id}")
+        raise ActionError(400, "bad_action", "Unknown action.")
+
+    def run(self, body: dict) -> dict:
+        argv, cwd, stdin, label = self.plan(body)
+        if not self.lock.acquire(blocking=False):
+            raise ActionError(409, "busy", "Another action is still running.")
+        try:
+            res = subprocess.run(argv, cwd=str(cwd), input=stdin, capture_output=True,
+                                 text=True, timeout=ACTION_TIMEOUT)
+        except FileNotFoundError:
+            raise ActionError(502, "missing", f"{argv[0]} was not found.") from None
+        except subprocess.TimeoutExpired:
+            raise ActionError(504, "timeout", f"{label} took longer than {ACTION_TIMEOUT} s.") from None
+        finally:
+            self.lock.release()
+        output = "\n".join(((res.stdout or "") + (res.stderr or "")).strip().splitlines()[-40:])
+        return {"ok": res.returncode == 0, "code": res.returncode, "command": label, "output": output}
+
+
 # ---- http ------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
@@ -637,8 +766,22 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def host_ok(self) -> bool:
+        """DNS rebinding guard: only answer requests addressed to this machine."""
+        return bool(re.fullmatch(r"(127\.0\.0\.1|localhost|\[::1\])(:\d+)?",
+                                 self.headers.get("Host", "")))
+
     def do_GET(self):
+        if not self.host_ok():
+            self.reply(403, b"this dashboard only answers 127.0.0.1 and localhost",
+                       "text/plain; charset=utf-8")
+            return
         target = urlsplit(self.path)
+        if target.path == "/api/actions":
+            data = self.server.actions.payload()
+            data["token"] = self.server.token
+            self.reply(200, json.dumps(data).encode(), "application/json")
+            return
         if target.path in ("/api/job", "/api/job/file"):
             self.serve_scroll(target)
             return
@@ -728,45 +871,63 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(status, json.dumps({"error": {"code": code, "message": message}}).encode(),
                    "application/json")
 
-    def do_POST(self):
-        """Only Legatus takes a POST, and only from this dashboard's own page."""
-        target = urlsplit(self.path)
-        if target.path not in ("/api/legatus/ask", "/api/legatus/reset"):
-            self.unsupported()
-            return
-        legatus = self.server.legatus
+    def read_post(self) -> dict | None:
+        """The guard every POST passes: our Host, our Origin, JSON, a sane size, our token."""
         host = self.headers.get("Host", "")
         origin = self.headers.get("Origin")
-        if (not re.fullmatch(r"(127\.0\.0\.1|localhost|\[::1\]):\d+", host)
-                or (origin is not None and origin != f"http://{host}")):
-            self.fail(403, "forbidden", "Legatus only answers this dashboard's own page.")
-            return
+        if not self.host_ok() or (origin is not None and origin != f"http://{host}"):
+            self.fail(403, "forbidden", "Only this dashboard's own page may do that.")
+            return None
         if not (self.headers.get("Content-Type") or "").startswith("application/json"):
             self.fail(415, "json_only", "Send JSON.")
-            return
+            return None
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
         if length <= 0 or length > 4 * LEGATUS_MAX_CHARS:
             self.fail(400, "bad_body", "Empty or too long.")
-            return
+            return None
         try:
             body = json.loads(self.rfile.read(length))
         except ValueError:
             self.fail(400, "bad_body", "Not JSON.")
-            return
+            return None
         if not isinstance(body, dict):
             self.fail(400, "bad_body", "Not a JSON object.")
+            return None
+        if not secrets.compare_digest(str(body.get("token", "")), self.server.token):
+            self.fail(403, "bad_token", "Reload the page and try again.")
+            return None
+        return body
+
+    def do_POST(self):
+        """Only Legatus and the confirmed actions take a POST."""
+        path = urlsplit(self.path).path
+        if path not in ("/api/legatus/ask", "/api/legatus/reset", "/api/action"):
+            self.unsupported()
             return
+        body = self.read_post()
+        if body is None:
+            return
+        if path == "/api/action":
+            actions = self.server.actions
+            if not actions.enabled:
+                self.fail(503, "actions_off", actions.reason or "Actions are off.")
+                return
+            try:
+                result = actions.run(body)
+            except ActionError as exc:
+                self.fail(exc.status, exc.code, exc.message)
+                return
+            self.reply(200, json.dumps(result).encode(), "application/json")
+            return
+        legatus = self.server.legatus
         if not legatus.enabled:
             self.fail(503, "legatus_off", legatus.reason or "Legatus is off.")
             return
-        if not secrets.compare_digest(str(body.get("token", "")), legatus.token):
-            self.fail(403, "bad_token", "Reload the page and try again.")
-            return
         try:
-            if target.path == "/api/legatus/reset":
+            if path == "/api/legatus/reset":
                 legatus.reset()
                 self.reply(200, json.dumps({"ok": True}).encode(), "application/json")
                 return
@@ -789,11 +950,15 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def build_server(port: int, demo: bool, root: str | None,
-                 legatus: Legatus | None = None) -> ThreadingHTTPServer:
+                 legatus: Legatus | None = None,
+                 actions: Actions | None = None) -> ThreadingHTTPServer:
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     httpd.demo = demo
     httpd.root = root
+    httpd.token = secrets.token_urlsafe(24)   # one per start; only our own page can read it
     httpd.legatus = legatus or Legatus.off("Legatus is not set up on this server.")
+    httpd.legatus.token = httpd.token
+    httpd.actions = actions or Actions(root, enabled=False, reason="Actions are not set up on this server.")
     return httpd
 
 
@@ -806,12 +971,20 @@ def main(argv: list[str]) -> None:
                         help="serve a fake camp instead of reading projects")
     parser.add_argument("--no-legatus", action="store_true",
                         help="turn off Legatus (the claude-backed agent panel)")
+    parser.add_argument("--no-actions", action="store_true",
+                        help="no buttons that change anything (station, feedback, reject)")
     parser.add_argument("--legatus-model", default=None,
                         help=f"model for Legatus (default: config.json legatus.model or {LEGATUS_MODEL})")
     args = parser.parse_args(argv)
     legatus = make_legatus(args.root, args.demo, not args.no_legatus, args.legatus_model)
+    if args.demo:
+        actions = Actions(args.root, enabled=False, reason="Actions are off in demo mode.")
+    elif args.no_actions:
+        actions = Actions(args.root, enabled=False, reason="Actions are turned off (--no-actions).")
+    else:
+        actions = Actions(args.root)
     try:
-        httpd = build_server(args.port, args.demo, args.root, legatus)
+        httpd = build_server(args.port, args.demo, args.root, legatus, actions)
     except OSError as exc:
         print(f"camp: could not bind 127.0.0.1:{args.port}: {exc}", file=sys.stderr)
         raise SystemExit(1)

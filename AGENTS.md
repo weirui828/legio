@@ -20,7 +20,7 @@ receives. Everything is checked against the source; where a doc disagrees, the s
 | **legio** | finds projects, turns labelled issues into jobs, owns the host registry, wraps the centuria CLI | `legio`, `config.json`, `hosts/` | never copied into a project |
 | **centuria** | the pipeline: state machine, roles, artifacts, one worktree per job | `centuria/` (template) | `<project>/.centuria/` |
 | **swarm** | review-only: diff in, review files out | `swarm/` | runs against any git repo |
-| **web** | dashboard, two skins (Principia, camp) + Legatus, a read-only `claude -p` agent | `web/` | reads projects, writes nothing to them (Legatus keeps `.legatus/` in this checkout) |
+| **web** | dashboard, two skins (Principia, camp) + Legatus (a read-only `claude -p` agent) + three confirmed actions | `web/` | reads projects; changes them only through the CLI after the operator confirms (station, feedback, reject) |
 
 Stationing copies `centuria/` to `<project>/.centuria/`, appends `.centuria/`, `.worktrees/` and the
 host's `host_paths` to the project's **`.git/info/exclude`** (never `.gitignore`), and stamps
@@ -39,7 +39,7 @@ shipped code.
 ./legio --help && ./legio hosts && ./legio doctor   # discovery/health, read-only
 python3 -m unittest discover -s tests -p 'test_*.py' -v   # 7 tests
 python3 -m unittest discover -s swarm/tests -v            # 24 tests
-python3 -m unittest discover -s web/tests -v              # 28 tests
+python3 -m unittest discover -s web/tests -v              # 35 tests
 python3 -m py_compile legio centuria/bin/centuria centuria/bin/job \
   centuria/bin/gate centuria/bin/run swarm/swarm swarm/*.py web/*.py web/tools/*.py tests/*.py
 bash .centuria/checks.sh          # this checkout's real static checks
@@ -63,9 +63,9 @@ fake hosts exist for that (§11).
 | 2 | **legio never merges.** Default `merge_policy: human`; APPROVE only marks the PR ready. | A faulty reviewer must not ship code. | `advance()` allows `approve → merging` only when `merge_policy == "legio"`; `job merge` is the only merge path. |
 | 3 | **No stage, role or artifact name hardcoded in `legio`.** | `centuria/` is a template, not a framework: upgrading the pipeline must not change legio. | `legio` shells out only to `.centuria/bin/{job,gate,run}` and never parses a job artifact — see the check below this table. |
 | 4 | **A prompt must never start with `-`.** | Passed as argv for some hosts; a leading dash parses as an option (dsh answered `unknown option`). | `bin/run`/`hostkit.build()` start the body with the job header, role file after it. |
-| 5 | **Local excludes go in `.git/info/exclude`, never `.gitignore`.** | Nothing legio creates may enter a project's history or dirty `git status`. | `legio add` adds `.centuria/`, `.worktrees/`, `host_paths`; `swarm/api.py::_ensure_excluded` adds `.swarm/`; `web` writes nothing to a project (only Legatus's git-ignored `.legatus/` in this checkout). |
+| 5 | **Local excludes go in `.git/info/exclude`, never `.gitignore`.** | Nothing legio creates may enter a project's history or dirty `git status`. | `legio add` adds `.centuria/`, `.worktrees/`, `host_paths`; `swarm/api.py::_ensure_excluded` adds `.swarm/`; `web` never writes to a project itself (its confirmed actions run `legio add` / `bin/job`; Legatus keeps a git-ignored `.legatus/` here). |
 | 6 | **An agent is a courier: work order in, one file out, exit.** No conversation is state. | Crashed sessions resume, hosts are swappable, a chatty model cannot corrupt state. | Every prompt names the one artifact; loop = `job next` → host → `job done`; state lives only in `job.json` + artifacts. |
-| 7 | **Tests stay offline: fake hosts, fake `centuria view`, no network, no model.** | Testable without credentials; fake hosts prove the host contract. | `hosts/fake.json` + `tests/fake-agent.py`; `swarm/hosts/fake.json` + `swarm/tests/fake-reviewer.py`; `web/tests` temp fixtures + `web/tests/fake_claude.py` for Legatus. |
+| 7 | **Tests stay offline: fake hosts, fake `centuria view`, no network, no model.** | Testable without credentials; fake hosts prove the host contract. | `hosts/fake.json` + `tests/fake-agent.py`; `swarm/hosts/fake.json` + `swarm/tests/fake-reviewer.py`; `web/tests` temp fixtures + `web/tests/fake_claude.py` (Legatus) + `web/tests/fake_cli.py` (actions). |
 | 8 | **Stage names live in `centuria/bin/job`; role assignment lives in config.** | Adding a role is a table edit; adding a stage is a deliberate code change. | `TRANSITIONS`; `config.json` `stages`, `routing`, `surface_reviewers`, `role_tiers`, `tiers`. |
 | 9 | **Never point `fake` at a real project.** | `tests/fake-agent.py` commits, pushes and writes artifacts unconditionally. | Host profiles warn; use a throwaway repo. |
 
@@ -376,8 +376,8 @@ Flags: `--base`, `--head`, `--diff <path|->`, `--pr N`, `--spec PATH`, `--host`,
 `--dry-run`, `--json`. Also `reviewers [--json]`, `hosts [--json]`, `version`. Exit: 0 PASS, 1 CHANGES,
 2 error, 3 empty diff, 130 Ctrl-C; bare `swarm` prints help and exits 2.
 
-`python3 web/serve.py [--port 8766] [--root DIR] [--demo] [--no-legatus] [--legatus-model ID]` binds
-`127.0.0.1`, exits 1 on bind failure; its only POSTs are Legatus's (§12).
+`python3 web/serve.py [--port 8766] [--root DIR] [--demo] [--no-legatus] [--no-actions] [--legatus-model ID]`
+binds `127.0.0.1`, exits 1 on bind failure; its only POSTs are Legatus's and the confirmed actions (§12).
 
 ## 9. Configuration reference
 
@@ -452,7 +452,7 @@ All suites are stdlib `unittest`, offline, temp-dir fixtures, from the repo root
 |---|---|---|
 | `python3 -m unittest discover -s tests -p 'test_*.py' -v` | 7 | `legio hosts --json` shape/parse/fallbacks + `live.json` write/remove/missing folder |
 | `python3 -m unittest discover -s swarm/tests -v` | 24 | fan-out, PASS/CHANGES/ERROR, exit codes, `--diff`/`--pr`/`--spec`, crashed reviewer, tier/risk overrides, `--jobs 1`, dry-run, empty diff, unknown reviewer/host, library API, clean `git status` |
-| `python3 -m unittest discover -s web/tests -v` | 28 | payload allowlist, discovery, uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest, Legatus (fake claude: argv, resume, origin/token, reset, failures, off states) |
+| `python3 -m unittest discover -s web/tests -v` | 35 | payload allowlist, discovery, uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest, Host allowlist, Legatus (fake claude: argv, resume, origin/token, reset, failures, off states), actions (fake CLI: targets, stages, stdin, failures, token, demo) |
 | `python3 -m unittest tests.test_live_heartbeat -v` | 3 | heartbeat tests, addressable individually |
 | `bash .centuria/checks.sh` | — | this checkout's gate: `py_compile`, `json.tool`, `bash -n` |
 
@@ -491,6 +491,15 @@ legio checkout, prompt on stdin, 600 s limit, one at a time (409). POSTs need JS
 and a matching `Origin` (403 otherwise); state is `.legatus/{session,transcript}.json` (git-ignored).
 Off with `--no-legatus`, in `--demo`, or without `claude` on PATH.
 
+**Every request** must carry `Host` 127.0.0.1 / localhost / [::1] (403 otherwise: DNS-rebinding guard).
+**Actions** (`GET /api/actions` → `{enabled, reason, hosts, default_host, token}`; `POST /api/action`
+`{token, action, …}` → `{ok, code, command, output}`) run the CLI after the operator confirms in the UI:
+`station` = `./legio add <path> --host <h>` for a server-listed uncharted path and a non-`fake` host;
+`say` = `.centuria/bin/job feedback <id>` (stdin) for a `needs-human` job; `reject` =
+`.centuria/bin/job reject <id>` (stdin) for a waiting job. No merge action. One at a time (409), 120 s,
+off in `--demo` / `--no-actions`. Legatus's commands get a Run… button only when they parse to one of
+these three.
+
 | endpoint | returns |
 |---|---|
 | `GET /api/camp` | `{generated_at, demo, projects:[{name, path, ok, error, jobs, cast, lives}], uncharted:[{name, path}]}` (`uncharted` = git repos under the root without a centuria); jobs filtered to `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster, cost_usd, active, waiting, terminal, human_reason` (no worktree, prompts, config or secrets) |
@@ -521,7 +530,7 @@ settings live in `localStorage["principia-prefs"]`. Routes `#/legion/<name>[/job
 Assets: `web/assets/` is committed (51 WebP + `manifest.json` with `file/w/h`), generated from
 `docs/ui/assets-src/` (local, gitignored, 64 MB here) by `web/tools/prepare_assets.py`; art direction in
 `docs/ui/assets.md`. Screenshots: `web/docs/{camp,tent,job,scrolls,cast,quiet}.jpg` (note the `web/`
-prefix). Tests: 28, fake projects with a stub `centuria view` and a fake `claude` for Legatus.
+prefix). Tests: 35, fake projects with a stub `centuria view`, a fake `claude` (Legatus) and a fake CLI (actions).
 
 ## 13. Gotchas
 

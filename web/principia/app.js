@@ -78,6 +78,7 @@ const state = {
   project: null, job: null, view: 'via', file: null, q: '', big: false,
   history: new Map(), files: new Map(), queue: Promise.resolve(),
   seen: null, msgs: [], unread: 0,
+  act: { enabled: false, reason: '', hosts: [], default_host: null, token: null, busy: false },
   lg: { enabled: false, reason: 'Connecting to Legatus…', model: '', token: null, messages: [], local: [], busy: false, pending: null, loaded: false },
 };
 
@@ -253,7 +254,7 @@ function noticeChanges() {
   state.seen = now;
 }
 
-async function poll() {
+async function fetchCamp() {
   try {
     const data = await getJSON('/api/camp');
     state.error = null;
@@ -274,9 +275,11 @@ async function poll() {
       if (!state.data) $('#board').innerHTML = `<div class="broken"><b>Can't reach the camp server.</b> Is <span class="mono">python3 web/serve.py</span> still running?</div>`;
       say('I lost the connection to the camp server. I keep trying.');
     }
-  } finally {
-    setTimeout(poll, POLL_MS);
   }
+}
+async function poll() {
+  await fetchCamp();
+  setTimeout(poll, POLL_MS);
 }
 
 // ---------------------------------------------------------------- routing
@@ -352,7 +355,9 @@ function renderLeft() {
   }).join('') || '<div class="note" style="padding:0 6px">No centuria found. Station one with <span class="mono">legio add &lt;path&gt;</span>.</div>';
   const unch = state.data?.uncharted || [];
   $('#unch-wrap').hidden = !unch.length;
-  $('#uncharted').innerHTML = unch.map((u) => `<button class="unch" type="button" data-copy="${esc(`legio add ${u.path}`)}" title="Copy the command that stations a centuria here"><span>${esc(u.name)}</span><span>station +</span></button>`).join('');
+  $('#uncharted').innerHTML = unch.map((u) => (state.act.enabled
+    ? `<button class="unch" type="button" data-station="${esc(u.path)}" title="Station a centuria in ${esc(u.name)}"><span>${esc(u.name)}</span><span>station +</span></button>`
+    : `<button class="unch" type="button" data-copy="${esc(`legio add ${u.path}`)}" title="Copy the command that stations a centuria here"><span>${esc(u.name)}</span><span>station +</span></button>`)).join('');
   $('#foot').innerHTML = `read-only · refreshes every ${POLL_MS / 1000} s${state.data?.demo ? ' · demo data' : ''}`;
 }
 
@@ -659,14 +664,18 @@ function renderDetail() {
     state.file = (withFile[withFile.length - 1] || {}).file || files[0] || null;
   }
   const acts = actionsOf(p, j);
-  const primary = acts.find((a) => a[2]);
+  const doable = state.act.enabled ? doableOf(j) : [];
+  let primary = acts.find((a) => a[2]);
+  let primaryAct = null;
+  if (doable.length && j.stage === 'needs-human' && !(approved(j) && j.pr)) { primaryAct = doable[0]; primary = null; }
   const rest = acts.filter((a) => a !== primary);
+  const restActs = doable.filter((a) => a !== primaryAct);
   const head = (s) => (s.role && ROLE_NAMES[s.role] ? mg(s.role, 'tiny') : '');
   box.innerHTML = `<div class="dhead">
       <div class="dtitle"><h2 title="${esc(j.title)}">${esc(j.title)}</h2><div class="dmeta">${factsOf(p, j)}</div></div>
-      <div class="acts">${primary ? `<button class="btn pri" type="button" data-copy="${esc(primary[1])}" title="${esc(primary[1])}">${esc(primary[0])}</button>` : ''}
-        <details class="menu"><summary class="btn" title="Copy a command">Copy<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>
-          <div class="menu-list">${rest.map(([label, cmd]) => `<button type="button" data-copy="${esc(cmd)}"><b>${esc(label.replace(/^Copy /, ''))}</b><span class="mono">${esc(cmd)}</span></button>`).join('')}</div></details>
+      <div class="acts">${primary ? `<button class="btn pri" type="button" data-copy="${esc(primary[1])}" title="${esc(primary[1])}">${esc(primary[0])}</button>` : ''}${primaryAct ? `<button class="btn pri" type="button" data-act="${primaryAct[1]}">${esc(primaryAct[0])}</button>` : ''}
+        <details class="menu"><summary class="btn" title="${restActs.length ? 'Act on this job or copy a command' : 'Copy a command'}">${restActs.length ? 'More' : 'Copy'}<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg></summary>
+          <div class="menu-list">${restActs.length ? `<div class="sec-h">ACT</div>${restActs.map(([label, act, note]) => `<button type="button" data-act="${act}"><b>${esc(label)}</b><span class="mono">${esc(note)}</span></button>`).join('')}<hr><div class="sec-h">COPY</div>` : ''}${rest.map(([label, cmd]) => `<button type="button" data-copy="${esc(cmd)}"><b>${esc(label.replace(/^Copy /, ''))}</b><span class="mono">${esc(cmd)}</span></button>`).join('')}</div></details>
         ${expandButton()}</div></div>
     <div class="dbody"><div class="story" aria-label="Timeline and files">${items.map((s) => `<div class="st ${s.state || ''}"><div class="h">${esc(s.label)}${head(s)}</div>${s.text ? `<div class="t">${esc(s.text)}</div>` : ''}${s.file ? `<button class="f ${state.file === s.file ? 'on' : ''}" type="button" data-file="${esc(s.file)}">${esc(s.file)}</button>` : ''}</div>`).join('')}</div>
       <div class="vsplit" role="separator" aria-orientation="vertical" aria-label="Resize the timeline (drag, or use the arrow keys; double-click to reset)" tabindex="0"></div>
@@ -891,7 +900,8 @@ function chatMd(text) {
       const buf = [];
       for (i += 1; i < lines.length && !/^\s*```/.test(lines[i]); i++) buf.push(lines[i]);
       const code = buf.join('\n');
-      out.push(`<div class="code"><button type="button" data-copy="${esc(code)}">Copy</button><pre>${esc(code)}</pre></div>`);
+      const runnable = state.act.enabled && parseRunnable(code);
+      out.push(`<div class="code">${runnable ? `<button type="button" class="run" data-run="${esc(code)}" title="Opens a confirm step first">Run…</button>` : ''}<button type="button" data-copy="${esc(code)}">Copy</button><pre>${esc(code)}</pre></div>`);
       continue;
     }
     const ul = l.match(/^\s*[-*] (.*)$/);
@@ -1126,7 +1136,13 @@ document.addEventListener('click', (e) => {
   const c = e.target.closest('[data-copy]');
   if (c) { e.preventDefault(); e.stopPropagation(); copy(c.dataset.copy); closeMenus(); return; }
   if (e.target.closest('[data-expand]')) { setBig(!state.big); return; }
-  if (e.target.closest('#scrim')) { setBig(false); return; }
+  if (e.target.closest('#scrim')) { if (!$('#dialog').hidden) closeDialog(); else setBig(false); return; }
+  const st = e.target.closest('[data-station]');
+  if (st) { const u = (state.data?.uncharted || []).find((x) => x.path === st.dataset.station); if (u) openStation(u); return; }
+  const ac = e.target.closest('[data-act]');
+  if (ac) { closeMenus(); const p = project(state.project); const j = p && (p.jobs || []).find((x) => x.id === state.job); if (j) openJobAction(ac.dataset.act, p, j, ''); return; }
+  const rn = e.target.closest('[data-run]');
+  if (rn) { runFromCommand(rn.dataset.run); return; }
   if (e.target.closest('[data-legatus]')) { openLegatus($('#lgwin').hidden); return; }
   const rb = e.target.closest('[data-legatus-reset]');
   if (rb) { resetLegatus(rb); return; }
@@ -1146,6 +1162,8 @@ document.addEventListener('click', (e) => {
 });
 document.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#q').focus(); return; }
+  if (e.key === 'Escape' && !$('#dialog').hidden) { closeDialog(); return; }
+  if (e.target.closest && e.target.closest('#dialog')) return;
   if (e.key === 'Escape' && !$('#sets').hidden) { openSettings(false); $('#gear').focus(); return; }
   if (e.key === 'Escape' && state.big) { setBig(false); return; }
   if (e.key === 'Escape' && !$('#lgwin').hidden) { openLegatus(false); $('.lgbtn').focus(); return; }
@@ -1224,5 +1242,185 @@ document.addEventListener('input', (e) => {
   e.target.style.height = `${Math.min(140, e.target.scrollHeight)}px`;
 });
 
+// ---------------------------------------------------------------- actions: confirmed, then run by the server's CLI
+
+async function loadActions() {
+  try {
+    const data = await getJSON('/api/actions');
+    Object.assign(state.act, { enabled: !!data.enabled, reason: data.reason, hosts: data.hosts || [], default_host: data.default_host, token: data.token });
+  } catch (_) {
+    state.act.enabled = false;
+  }
+  if (state.data) { renderLeft(); renderDetail(); }
+  renderMsgs();
+}
+
+// which actions this job allows: [label, action, what it does]
+function doableOf(j) {
+  const out = [];
+  if (j.stage === 'needs-human') out.push(['Send feedback…', 'say', 'back to build with your note']);
+  if (j.stage === 'needs-human' || j.stage === 'needs-info') out.push(['Reject…', 'reject', 'stop the job for good']);
+  return out;
+}
+
+let dialogState = null;
+function closeDialog() {
+  $('#dialog').hidden = true;
+  document.body.classList.remove('dialog-open');
+  if (!state.big) $('#scrim').hidden = true;
+  const back = dialogState?.returnFocus;
+  dialogState = null;
+  if (back && back.isConnected) back.focus();
+}
+function openDialog(spec) {
+  dialogState = { ...spec, returnFocus: document.activeElement };
+  const d = $('#dialog');
+  const fields = (spec.fields || []).map((f) => f.kind === 'select'
+    ? `<label>${esc(f.label)}<select data-field="${f.id}">${f.options.map((o) => `<option value="${esc(o.value)}" ${o.value === f.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>`
+    : `<label>${esc(f.label)}<textarea data-field="${f.id}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea></label>`).join('');
+  d.innerHTML = `<h3 id="dlg-title">${esc(spec.title)}</h3><p class="lead">${spec.lead}</p>${spec.list ? `<ul>${spec.list.map((x) => `<li>${x}</li>`).join('')}</ul>` : ''}
+    ${fields}<div class="will"><span>Runs</span><code id="dlg-cmd"></code></div><div class="err" id="dlg-err" hidden></div><pre class="out" id="dlg-out" hidden></pre>
+    <div class="row"><button class="btn" type="button" data-dlg-cancel>Cancel</button><button class="btn ${spec.danger ? 'danger' : 'pri'}" type="button" data-dlg-ok>${esc(spec.confirm)}</button></div>`;
+  d.hidden = false;
+  document.body.classList.add('dialog-open');
+  $('#scrim').hidden = false;
+  updateDialog();
+  (d.querySelector('[data-field]') || d.querySelector('[data-dlg-ok]')).focus();
+}
+function dialogValues() {
+  const v = {};
+  document.querySelectorAll('#dialog [data-field]').forEach((el) => { v[el.dataset.field] = el.value; });
+  return v;
+}
+function updateDialog() {
+  if (!dialogState) return;
+  $('#dlg-cmd').textContent = dialogState.preview(dialogValues());
+}
+async function confirmDialog() {
+  if (!dialogState || state.act.busy) return;
+  const values = dialogValues();
+  const problem = dialogState.check ? dialogState.check(values) : '';
+  const err = $('#dlg-err');
+  if (problem) { err.textContent = problem; err.hidden = false; return; }
+  err.hidden = true;
+  const ok = $('#dialog [data-dlg-ok]');
+  state.act.busy = true;
+  ok.textContent = 'Running…';
+  let result = null;
+  let failure = '';
+  try {
+    const res = await fetch('/api/action', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: state.act.token, ...dialogState.body(values) }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) failure = data?.error?.message || `The server said ${res.status}.`;
+    else result = data;
+  } catch (_) {
+    failure = 'Lost the connection to the camp server.';
+  }
+  state.act.busy = false;
+  if (!dialogState) return;
+  ok.textContent = dialogState.confirm;
+  if (result && result.ok) {
+    const label = result.command;
+    closeDialog();
+    toast(`Done: ${label}`);
+    say(`You ran <b>${esc(label)}</b>. ${esc(result.output.split('\n').slice(-1)[0] || '')}`);
+    await fetchCamp();
+    return;
+  }
+  const out = $('#dlg-out');
+  out.textContent = failure || `${result.command} exited with ${result.code}.\n\n${result.output}`;
+  out.hidden = false;
+}
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-dlg-cancel]')) closeDialog();
+  else if (e.target.closest('[data-dlg-ok]')) confirmDialog();
+});
+document.addEventListener('input', (e) => { if (e.target.closest && e.target.closest('#dialog')) updateDialog(); });
+document.addEventListener('change', (e) => { if (e.target.closest && e.target.closest('#dialog')) updateDialog(); });
+document.addEventListener('keydown', (e) => {
+  if (!dialogState || !e.target.closest || !e.target.closest('#dialog')) return;
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); confirmDialog(); }
+  if (e.key === 'Tab') {   // keep focus inside the dialog
+    const items = [...document.querySelectorAll('#dialog textarea, #dialog select, #dialog button')];
+    const i = items.indexOf(document.activeElement);
+    if (e.shiftKey && i === 0) { e.preventDefault(); items[items.length - 1].focus(); }
+    else if (!e.shiftKey && i === items.length - 1) { e.preventDefault(); items[0].focus(); }
+  }
+});
+
+function openStation(u, host) {
+  const hosts = state.act.hosts;
+  const chosen = hosts.some((h) => h.name === host) ? host : state.act.default_host;
+  openDialog({
+    title: `Station a centuria in ${u.name}`,
+    lead: `legio sets up its pipeline in <span class="mono">${esc(u.path)}</span>. Your code and git history are not touched.`,
+    list: ['copies the pipeline into <span class="mono">.centuria/</span>', 'adds <span class="mono">.centuria/</span>, <span class="mono">.worktrees/</span> and the host\'s own paths to <span class="mono">.git/info/exclude</span> (never <span class="mono">.gitignore</span>)', 'records the host below as the project\'s default; undo with <span class="mono">legio remove</span>'],
+    fields: [{ kind: 'select', id: 'host', label: 'Host (which agent CLI runs the jobs)', value: chosen,
+      options: hosts.map((h) => ({ value: h.name, label: `${h.name}${h.untested ? ' (untested)' : ''}${h.about ? ` · ${h.about}` : ''}` })) }],
+    confirm: 'Station it',
+    preview: (v) => `legio add ${u.path} --host ${v.host}`,
+    body: (v) => ({ action: 'station', path: u.path, host: v.host }),
+  });
+}
+
+function openJobAction(act, p, j, text) {
+  const ref = `${p.name}:${j.id}`;
+  if (act === 'say') {
+    openDialog({
+      title: `Send feedback to ${p.name} ${shortId(j)}`,
+      lead: `<b>${esc(j.title)}</b> goes back to build. Fabri reads your note as the input for round ${(j.round || 0) + 1}.`,
+      fields: [{ kind: 'textarea', id: 'text', label: 'Your feedback', value: text, placeholder: 'What should change?' }],
+      confirm: 'Send feedback',
+      preview: (v) => `legio say ${ref} "${(v.text || '').trim().replace(/\s+/g, ' ').slice(0, 80)}${(v.text || '').trim().length > 80 ? '…' : ''}"`,
+      check: (v) => ((v.text || '').trim() ? '' : 'Write the feedback first.'),
+      body: (v) => ({ action: 'say', project: p.name, job: j.id, text: v.text }),
+    });
+  } else if (act === 'reject') {
+    openDialog({
+      title: `Reject ${p.name} ${shortId(j)}`,
+      lead: `<b>${esc(j.title)}</b> stops for good: legio removes its worktree and branch and notes the reason on the issue. This can't be undone from here.`,
+      fields: [{ kind: 'textarea', id: 'text', label: 'Reason (optional)', value: text, placeholder: 'rejected by the operator' }],
+      confirm: 'Reject job', danger: true,
+      preview: (v) => `legio reject ${ref} "${((v.text || '').trim() || 'rejected by the operator').replace(/\s+/g, ' ').slice(0, 80)}"`,
+      body: (v) => ({ action: 'reject', project: p.name, job: j.id, text: v.text }),
+    });
+  }
+}
+
+// a command from Legatus becomes a Run button only when it is one of our three actions
+function unquote(s) {
+  const t = (s || '').trim();
+  const m = t.match(/^"((?:[^"\\]|\\.)*)"$/) || t.match(/^'([^']*)'$/);
+  return m ? m[1].replace(/\\(.)/g, '$1') : t;
+}
+function parseRunnable(code) {
+  const line = String(code).trim().replace(/^\$\s+/, '');
+  if (!line || line.includes('\n')) return null;
+  let m = line.match(/^(?:\.\/)?legio\s+(say|reject)\s+([\w.-]+):([\w.-]+)(?:\s+(.+))?$/);
+  if (m) {
+    const p = project(m[2]);
+    const j = p && (p.jobs || []).find((x) => x.id === m[3] || shortId(x) === m[3]);
+    if (!j) return null;
+    if (m[1] === 'say' && j.stage !== 'needs-human') return null;
+    if (m[1] === 'reject' && !isWaiting(j)) return null;
+    return { act: m[1], p, j, text: unquote(m[4]) };
+  }
+  m = line.match(/^(?:\.\/)?legio\s+add\s+(\S+)(?:\s+--host\s+(\S+))?$/);
+  if (m) {
+    const arg = m[1].replace(/\/+$/, '');
+    const u = (state.data?.uncharted || []).find((x) => x.path === arg || x.name === arg || arg.endsWith(`/${x.name}`));
+    return u ? { act: 'station', u, host: m[2] } : null;
+  }
+  return null;
+}
+function runFromCommand(code) {
+  const r = parseRunnable(code);
+  if (!r) { toast('That command is no longer valid here. Copy it instead.'); return; }
+  if (r.act === 'station') openStation(r.u, r.host);
+  else openJobAction(r.act, r.p, r.j, r.text);
+}
+
+loadActions();
 loadLegatus();
 poll();
