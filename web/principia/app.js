@@ -78,6 +78,7 @@ const state = {
   project: null, job: null, view: 'via', file: null, q: '', big: false,
   history: new Map(), files: new Map(), queue: Promise.resolve(),
   seen: null, msgs: [], unread: 0,
+  lg: { enabled: false, reason: 'Connecting to Legatus…', model: '', token: null, messages: [], local: [], busy: false, pending: null, loaded: false },
 };
 
 const projects = () => state.data?.projects || [];
@@ -201,7 +202,7 @@ function fingerprint(data) {
 }
 
 function say(html) {
-  state.msgs.push({ at: clock(), html });
+  state.msgs.push({ at: Date.now(), html });
   if (state.msgs.length > 40) state.msgs.shift();
   if (prefs.rfold && $('#lgwin').hidden) state.unread += 1;
   renderMsgs();
@@ -868,12 +869,153 @@ function renderWork() {
   }).join('') || (pick ? '' : '<div class="note" style="padding:0 6px">Nobody is working right now.</div>');
 }
 
-function renderMsgs() {
-  const html = state.msgs.map((m) => `<div class="lgrow"><span class="lgface" role="img" aria-label="Legatus"></span><div class="msg"><time>${esc(m.at)}</time>${m.html}</div></div>`).join('');
+// ---------------------------------------------------------------- Legatus: the agent (claude -p, via serve.py)
+
+const MODEL_NAMES = { 'claude-opus-5-5': 'Opus 5.5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-haiku-5-5': 'Haiku 5.5', 'claude-fable-5-2': 'Fable 5.2' };
+const modelName = (id) => MODEL_NAMES[id] || id || '';
+const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function inlineMd(escaped) {
+  return escaped.replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+}
+// a small, safe markdown: everything is escaped first; code blocks get a Copy button
+function chatMd(text) {
+  const out = [];
+  const lines = String(text).split('\n');
+  let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*```/.test(l)) {
+      close();
+      const buf = [];
+      for (i += 1; i < lines.length && !/^\s*```/.test(lines[i]); i++) buf.push(lines[i]);
+      const code = buf.join('\n');
+      out.push(`<div class="code"><button type="button" data-copy="${esc(code)}">Copy</button><pre>${esc(code)}</pre></div>`);
+      continue;
+    }
+    const ul = l.match(/^\s*[-*] (.*)$/);
+    const ol = l.match(/^\s*\d+[.)] (.*)$/);
+    if (ul || ol) {
+      const kind = ul ? 'ul' : 'ol';
+      if (list !== kind) { close(); out.push(`<${kind}>`); list = kind; }
+      out.push(`<li>${inlineMd(esc((ul || ol)[1]))}</li>`);
+      continue;
+    }
+    close();
+    const h = l.match(/^#{1,4} (.*)$/);
+    if (h) out.push(`<p><b>${inlineMd(esc(h[1]))}</b></p>`);
+    else if (l.trim()) out.push(`<p>${inlineMd(esc(l))}</p>`);
+  }
+  close();
+  return out.join('');
+}
+
+async function loadLegatus() {
+  try {
+    const data = await getJSON('/api/legatus');
+    Object.assign(state.lg, {
+      enabled: !!data.enabled, reason: data.reason, model: data.model, token: data.token,
+      messages: Array.isArray(data.messages) ? data.messages : [], loaded: true,
+    });
+  } catch (_) {
+    Object.assign(state.lg, { enabled: false, reason: "Can't reach Legatus on the camp server.", loaded: true });
+  }
+  renderLegatusChrome();
+  renderMsgs();
+}
+
+function renderLegatusChrome() {
+  const lg = state.lg;
+  document.querySelectorAll('.lgmodel').forEach((el) => { el.textContent = lg.enabled ? `${modelName(lg.model)} · your login` : 'your legio agent'; });
+  document.querySelectorAll('[data-ask]').forEach((f) => {
+    f.hidden = !lg.enabled;
+    f.classList.toggle('busy', lg.busy);
+    f.querySelector('button').textContent = lg.busy ? 'Waiting…' : 'Send';
+  });
+  document.querySelectorAll('[data-legatus-off]').forEach((n) => { n.hidden = lg.enabled; n.textContent = lg.reason || 'Legatus is off.'; });
+  document.querySelectorAll('[data-legatus-reset]').forEach((b) => { b.hidden = !lg.enabled; });
+}
+
+function contextLine() {
+  const p = project(state.project);
+  const j = p && (p.jobs || []).find((x) => x.id === state.job);
+  if (!p) return '';
+  if (!j) return `the operator is looking at project ${p.name} in the dashboard`;
+  return `the operator is looking at ${p.name}:${j.id} ("${j.title}", stage ${j.stage}, round ${j.round || 0}) in the dashboard`;
+}
+
+async function askLegatus(text) {
+  const lg = state.lg;
+  if (!lg.enabled || !text.trim()) return false;
+  if (lg.busy) { toast('Legatus is still answering. Wait for that reply first.'); return false; }
+  lg.busy = true;
+  lg.pending = { text: text.trim(), at: Date.now() };
+  renderLegatusChrome();
+  renderMsgs(true);
+  try {
+    const res = await fetch('/api/legatus/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: lg.token, text: lg.pending.text, context: contextLine() }),
+    });
+    if (!res.ok) {
+      let msg = `Legatus could not answer (${res.status}).`;
+      try { msg = (await res.json()).error.message || msg; } catch (_) { /* keep the generic text */ }
+      lg.local.push({ role: 'user', text: lg.pending.text, at: lg.pending.at }, { role: 'error', text: msg, at: Date.now() });
+    }
+  } catch (_) {
+    lg.local.push({ role: 'user', text: lg.pending.text, at: lg.pending.at }, { role: 'error', text: "Lost the connection to the camp server.", at: Date.now() });
+  }
+  lg.busy = false;
+  lg.pending = null;
+  if (prefs.rfold && $('#lgwin').hidden) state.unread += 1;
+  await loadLegatus();
+  renderMsgs(true);
+  return true;
+}
+
+let resetArmed = 0;
+async function resetLegatus(btn) {
+  if (Date.now() - resetArmed > 3000) {
+    resetArmed = Date.now();
+    document.querySelectorAll('[data-legatus-reset]').forEach((b) => { b.classList.add('armed'); b.title = 'Click again to start over (the conversation is cleared)'; });
+    setTimeout(() => document.querySelectorAll('[data-legatus-reset]').forEach((b) => { b.classList.remove('armed'); b.title = 'Start a new conversation'; }), 3000);
+    return;
+  }
+  resetArmed = 0;
+  document.querySelectorAll('[data-legatus-reset]').forEach((b) => b.classList.remove('armed'));
+  try {
+    const res = await fetch('/api/legatus/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: state.lg.token }) });
+    if (!res.ok) throw new Error(String(res.status));
+    state.lg.local = [];
+    toast('New conversation with Legatus.');
+  } catch (_) {
+    toast("Couldn't start a new conversation. Is Legatus busy?");
+  }
+  await loadLegatus();
+  btn?.focus();
+}
+
+function renderMsgs(stick) {
+  const face = '<span class="lgface" role="img" aria-label="Legatus"></span>';
+  const items = [
+    ...state.msgs.map((m) => ({ at: m.at, html: `<div class="lgrow">${face}<div class="msg note"><time>${hhmm(m.at)}</time>${m.html}</div></div>` })),
+    ...[...state.lg.messages, ...state.lg.local].map((m) => ({
+      at: m.at || 0,
+      html: m.role === 'user'
+        ? `<div class="merow"><div class="msg me">${esc(m.text)}</div></div>`
+        : `<div class="lgrow">${face}<div class="msg ${m.role === 'error' ? 'err' : ''}"><time>${hhmm(m.at || Date.now())}${m.seconds ? ` · ${m.seconds}s` : ''}</time>${m.role === 'error' ? esc(m.text) : chatMd(m.text)}</div></div>`,
+    })),
+  ].sort((a, b) => a.at - b.at);
+  if (state.lg.pending) {
+    items.push({ at: state.lg.pending.at, html: `<div class="merow"><div class="msg me">${esc(state.lg.pending.text)}</div></div>` });
+    items.push({ at: Date.now(), html: `<div class="lgrow">${face}<div class="msg"><span class="thinking" aria-hidden="true"><i></i><i></i><i></i></span>thinking · <span class="mono" data-since-ms="${state.lg.pending.at}">0:00</span></div></div>` });
+  }
+  const html = items.map((x) => x.html).join('');
   for (const box of [$('#msgs'), $('#lgmsgs')]) {
     const near = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     box.innerHTML = html;
-    if (near) box.scrollTop = box.scrollHeight;
+    if (near || stick) box.scrollTop = box.scrollHeight;
   }
   $('#lgdot').hidden = !state.unread;
   $('.lgbtn').title = state.unread ? `Legatus has ${state.unread} new ${state.unread === 1 ? 'message' : 'messages'}` : 'Talk to Legatus';
@@ -888,7 +1030,7 @@ function openLegatus(open) {
     renderMsgs();
     const box = $('#lgmsgs');
     box.scrollTop = box.scrollHeight;
-    $('[data-legatus-close]').focus();
+    ($('#lgwin [data-ask]:not([hidden]) textarea') || $('[data-legatus-close]')).focus();
   }
 }
 
@@ -953,6 +1095,7 @@ function renderAll() {
 function renderTimersOnly() {
   const elapsed = (Date.now() - state.fetchedAt) / 1000;
   document.querySelectorAll('[data-age]').forEach((n) => { n.textContent = mmss(Number(n.dataset.age) + elapsed); });
+  document.querySelectorAll('[data-since-ms]').forEach((n) => { n.textContent = mmss((Date.now() - Number(n.dataset.sinceMs)) / 1000); });
 }
 
 let toastTimer = 0;
@@ -985,6 +1128,8 @@ document.addEventListener('click', (e) => {
   if (e.target.closest('[data-expand]')) { setBig(!state.big); return; }
   if (e.target.closest('#scrim')) { setBig(false); return; }
   if (e.target.closest('[data-legatus]')) { openLegatus($('#lgwin').hidden); return; }
+  const rb = e.target.closest('[data-legatus-reset]');
+  if (rb) { resetLegatus(rb); return; }
   if (e.target.closest('[data-legatus-close]')) { openLegatus(false); $('.lgbtn').focus(); return; }
   const fd = e.target.closest('[data-fold]');
   if (fd) { fold(fd.dataset.fold); return; }
@@ -1054,4 +1199,30 @@ applyPrefs();
 if (prefs.detailH) $('#mid').style.setProperty('--dh', `${prefs.detailH}px`);
 if (prefs.storyW) $('#detail').style.setProperty('--sw', `${prefs.storyW}px`);
 window.addEventListener('resize', () => { if (prefs.detailH) $('#mid').style.setProperty('--dh', `${clampDetail(prefs.detailH)}px`); });
+// the message box: Enter sends, Shift+Enter starts a new line, it grows with the text
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest('[data-ask]');
+  if (!form) return;
+  e.preventDefault();
+  const area = form.querySelector('textarea');
+  if (!area.value.trim()) { area.focus(); return; }
+  const text = area.value;
+  if (state.lg.busy) { toast('Legatus is still answering. Wait for that reply first.'); return; }
+  area.value = '';
+  area.style.height = '';
+  await askLegatus(text);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches && e.target.matches('[data-ask] textarea') && e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    e.target.closest('form').requestSubmit();
+  }
+});
+document.addEventListener('input', (e) => {
+  if (!e.target.matches || !e.target.matches('[data-ask] textarea')) return;
+  e.target.style.height = 'auto';
+  e.target.style.height = `${Math.min(140, e.target.scrollHeight)}px`;
+});
+
+loadLegatus();
 poll();

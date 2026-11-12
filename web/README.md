@@ -18,6 +18,8 @@ skin ever writes to a project.
 python3 web/serve.py            # http://127.0.0.1:8766 — the real camp
 python3 web/serve.py --demo     # a fake camp (four projects), for design work
 python3 web/serve.py --port 9000 --root ~/dev
+python3 web/serve.py --no-legatus             # without the agent panel
+python3 web/serve.py --legatus-model claude-sonnet-5-5
 ```
 
 Stop with Ctrl-C. There is no build step and no dependency: Python's standard
@@ -42,8 +44,8 @@ choice is kept in the browser (`localStorage["legio-skin"]`), and
   reviews, feedback, decision) next to a reader for each file.
 - **Right:** *Nuntii*, every job across all projects that waits on you, with
   the command to run; *At work*, the running roles with timers and the working
-  character at the desk; *Legatus*, who reports what changed while the page is
-  open. Talking to Legatus is not built yet.
+  character at the desk; *Legatus*, your agent (see below), who also reports
+  what changed while the page is open.
 - **Settings:** interface (Principia / camp), progress track (*Aqueduct*:
   water flows as far as the job has got, a crack marks a failed gate, a sluice
   means it waits on you; *Road*: milestones I–VI and the golden milestone;
@@ -105,6 +107,37 @@ There are two read-only endpoints behind it: `GET /api/job?project=&job=`
 anything outside the whitelist and anything that resolves outside the job
 folder, and `--demo` serves a small synthetic set.
 
+## Legatus (the agent)
+
+Legatus is Claude Code running on **your own login** (`claude -p`), with
+**Opus 5.5** by default (`claude-opus-5-5`; set `legatus.model` in the repo's
+`config.json` or pass `--legatus-model`). Ask him about the camp from the right
+panel or, with the panel folded, from his face on the rail.
+
+- **One ongoing conversation.** The first question starts a Claude Code
+  session; later ones `--resume` it, so he remembers what you discussed. Your
+  usual Claude settings, `CLAUDE.md` files and memory load as in any session.
+  *New conversation* (the ↺ button, click twice) starts over.
+- **Read-only tools.** He runs in the legio checkout with `--add-dir <projects
+  root>` and may only read files and run look-only commands (`./legio status`,
+  `inbox`, `ls`, `hosts`, `next`, `doctor`, `git log/status/diff/show`,
+  `gh pr|issue view/list`). `Write`, `Edit` and everything else are refused.
+  When something needs doing he gives you the exact command in a code block
+  with a Copy button; legio still never merges on its own.
+- **Context.** Each question carries a line saying which project and job you
+  are looking at, so "this job" works.
+- **His brief** is `web/legatus.md` (appended to Claude Code's system prompt).
+- **State.** The conversation id and transcript live in `.legatus/` in the
+  legio checkout (git-ignored). Nothing is written to any project.
+- **Off** with `--no-legatus`, in `--demo` (he would read your real
+  projects), or when `claude` is not on `PATH`; the panel then says why.
+
+The endpoints only answer this page: `POST /api/legatus/ask` and
+`/api/legatus/reset` need a JSON body, a per-start token (handed out by
+`GET /api/legatus`, which other sites cannot read) and, when the browser sends
+one, an `Origin` equal to this server. One question runs at a time (409 while
+busy); answers can take a few minutes (600 s limit).
+
 ## Data (read-only, by construction)
 
 `serve.py` discovers `*/​.centuria/config.json` under `projects_root` (from
@@ -120,8 +153,9 @@ legio's `config.json`, or `--root`), then for each project:
 
 `GET /api/camp` also lists `uncharted`: `{name, path}` of git repositories
 under the root that have no centuria (nothing inside them is read). With the
-two scroll endpoints above these are the only routes; every other method is
-405. There are no write endpoints and no agent calls.
+two scroll endpoints above and Legatus's three, these are the only routes;
+every other method is 405. The only POSTs are Legatus's, and the only process
+besides `centuria view` is his `claude -p`.
 
 ### The heartbeat
 
@@ -146,6 +180,7 @@ every 2.5s; a `live.json` older than 10 minutes (a killed process) is shown as
 web/
 ├── serve.py                 stdlib server: static files + the read-only API
 ├── principia/               the default skin: index.html, app.js, styles.css
+├── legatus.md               Legatus's brief (appended to Claude Code's system prompt)
 ├── index.html               the camp's shell (sends you to principia/ by default)
 ├── app.js                   routing, rendering, polling (no framework)
 ├── styles.css               the palette and every shape
@@ -175,7 +210,7 @@ broken images, so commit the output of the script when it changes.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s web/tests -v      # 22 tests, no network
+python3 -m unittest discover -s web/tests -v      # 28 tests, no network (Legatus uses tests/fake_claude.py)
 python3 -m unittest tests.test_live_heartbeat -v  # the runner's heartbeat
 ```
 

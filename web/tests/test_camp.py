@@ -322,6 +322,132 @@ class Http(Fixture):
             self.assertNotEqual(status, 200, path)
 
 
+class LegatusHttp(Fixture):
+    """Legatus talks to a fake `claude`: no network, no model, no cost."""
+
+    def setUp(self):
+        super().setUp()
+        self.project("alpha")
+        self.log = self.root / "claude-calls.jsonl"
+        os.environ["FAKE_CLAUDE_LOG"] = str(self.log)
+        self.addCleanup(os.environ.pop, "FAKE_CLAUDE_LOG", None)
+        self.addCleanup(os.environ.pop, "FAKE_CLAUDE_FAIL", None)
+        self.legatus = SERVE.Legatus(
+            str(self.root), command=[sys.executable, str(WEB / "tests" / "fake_claude.py")],
+            state_dir=self.root / ".legatus")
+        self.httpd = SERVE.build_server(0, demo=False, root=str(self.root), legatus=self.legatus)
+        self.port = self.httpd.server_port
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.addCleanup(self._stop)
+
+    def _stop(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=3)
+
+    def get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            conn.request("GET", path)
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    def post(self, path, body, origin="same", ctype="application/json"):
+        headers = {"Content-Type": ctype}
+        if origin == "same":
+            headers["Origin"] = f"http://127.0.0.1:{self.port}"
+        elif origin:
+            headers["Origin"] = origin
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=30)
+        try:
+            conn.request("POST", path, body=json.dumps(body), headers=headers)
+            response = conn.getresponse()
+            return response.status, json.loads(response.read())
+        finally:
+            conn.close()
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def test_payload_names_the_model_and_hands_out_a_token(self):
+        status, data = self.get("/api/legatus")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["enabled"])
+        self.assertEqual(data["model"], "claude-opus-5-5")
+        self.assertTrue(data["token"])
+        self.assertEqual(data["messages"], [])
+
+    def test_ask_starts_then_resumes_one_conversation(self):
+        token = self.get("/api/legatus")[1]["token"]
+        status, data = self.post("/api/legatus/ask", {"token": token, "text": "what needs me?",
+                                                      "context": "the operator is looking at alpha"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["message"]["role"], "legatus")
+        self.assertEqual(data["message"]["text"], "echo: what needs me?")
+        self.post("/api/legatus/ask", {"token": token, "text": "and now?"})
+        first, second = self.calls()
+        self.assertEqual(first["argv"][:4], ["-p", "--output-format", "json", "--model"])
+        self.assertIn("claude-opus-5-5", first["argv"])
+        self.assertIn("--session-id", first["argv"])
+        self.assertIn("--resume", second["argv"])
+        session = first["argv"][first["argv"].index("--session-id") + 1]
+        self.assertEqual(second["argv"][second["argv"].index("--resume") + 1], session)
+        self.assertTrue(first["prompt"].startswith("Context: the operator is looking at alpha"))
+        for argv in (first["argv"], second["argv"]):
+            self.assertIn("--allowedTools", argv)
+            self.assertIn("--disallowedTools", argv)
+            self.assertIn("Write", argv[argv.index("--disallowedTools"):])
+            self.assertNotIn("--dangerously-skip-permissions", argv)
+        messages = self.get("/api/legatus")[1]["messages"]
+        self.assertEqual([m["role"] for m in messages], ["user", "legatus", "user", "legatus"])
+
+    def test_only_this_page_may_ask(self):
+        token = self.get("/api/legatus")[1]["token"]
+        status, _ = self.post("/api/legatus/ask", {"token": token, "text": "hi"},
+                              origin="http://evil.example")
+        self.assertEqual(status, 403)
+        status, _ = self.post("/api/legatus/ask", {"token": "wrong", "text": "hi"})
+        self.assertEqual(status, 403)
+        status, _ = self.post("/api/legatus/ask", {"token": token, "text": "hi"}, ctype="text/plain")
+        self.assertEqual(status, 415)
+        status, _ = self.post("/api/camp", {"token": token})
+        self.assertEqual(status, 405)
+        self.assertFalse(self.log.exists())
+
+    def test_reset_starts_a_new_conversation(self):
+        token = self.get("/api/legatus")[1]["token"]
+        self.post("/api/legatus/ask", {"token": token, "text": "hi"})
+        before = self.legatus.session()["id"]
+        status, _ = self.post("/api/legatus/reset", {"token": token})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.get("/api/legatus")[1]["messages"], [])
+        self.assertNotEqual(self.legatus.session()["id"], before)
+        self.post("/api/legatus/ask", {"token": token, "text": "again"})
+        self.assertIn("--session-id", self.calls()[-1]["argv"])
+
+    def test_a_failed_answer_is_shown_not_hidden(self):
+        os.environ["FAKE_CLAUDE_FAIL"] = "1"
+        token = self.get("/api/legatus")[1]["token"]
+        status, data = self.post("/api/legatus/ask", {"token": token, "text": "hi"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["message"]["role"], "error")
+        self.assertIn("failed on purpose", data["message"]["text"])
+        self.assertFalse(self.legatus.session()["started"])
+
+    def test_off_unless_set_up_and_always_off_in_demo(self):
+        plain = SERVE.build_server(0, demo=False, root=str(self.root))
+        try:
+            self.assertFalse(plain.legatus.payload()["enabled"])
+            self.assertIsNone(plain.legatus.payload()["token"])
+        finally:
+            plain.server_close()
+        self.assertFalse(SERVE.make_legatus(str(self.root), True, True, None).enabled)
+        self.assertFalse(SERVE.make_legatus(str(self.root), False, False, None).enabled)
+
+
 class Assets(unittest.TestCase):
     def test_manifest_and_files_exist(self):
         assets = WEB / "assets"
