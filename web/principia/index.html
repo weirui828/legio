@@ -20,7 +20,7 @@
 
   <div class="cols">
     <nav class="pane left" aria-label="Projects">
-      <div><div class="label"><span><span class="la">CASTRA</span><span class="en">PROJECTS</span></span> <em id="ncastra"></em></div><div id="projects"></div></div>
+      <div><div class="label"><span class="lt"><span class="la">CASTRA</span><span class="en">PROJECTS</span></span> <em id="ncastra"></em><button class="fold" type="button" data-fold="left" title="Hide projects ( [ )" aria-label="Hide projects" aria-expanded="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3.5 5.5 8 10 12.5"/></svg></button></div><div id="projects"></div></div>
       <div id="unch-wrap"><div class="label"><span><span class="la">TERRA INCOGNITA</span><span class="en">NOT SET UP</span></span> <em>no centuria yet</em></div><div id="uncharted"></div></div>
       <div class="foot"><div class="campart" role="img" aria-label="The camp"></div><span id="foot"></span></div>
     </nav>
@@ -28,20 +28,28 @@
     <main class="pane mid" id="mid">
       <div class="mhead" id="mhead"></div>
       <div class="board" id="board"></div>
+      <div class="split" id="split" role="separator" aria-orientation="horizontal" aria-label="Resize job details (drag, or use the arrow keys; double-click to reset)" tabindex="0"></div>
       <section class="detail" id="detail" aria-label="Job details"></section>
     </main>
 
     <aside class="pane right" aria-label="Needs you, at work and Legatus">
-      <div class="sec"><div class="label"><span class="eh"><img src="../assets/mascot-eagle.webp" alt="" class="eagle"><span class="la">NUNTII · NEEDS YOU</span><span class="en">NEEDS YOU</span></span> <em id="nneed"></em></div><div id="needs"></div></div>
+      <div class="rrail"><button class="eaglebtn" type="button" data-fold="right" title="Show needs you, at work and Legatus ( ] )" aria-label="Show needs you, at work and Legatus" aria-expanded="false"><img src="../assets/mascot-eagle.webp" alt=""><span class="badge b-red" id="rneed" hidden></span></button><button class="lgbtn" type="button" data-legatus title="Talk to Legatus" aria-label="Open the Legatus window" aria-expanded="false" aria-controls="lgwin"><span class="lgface" aria-hidden="true"></span><span class="lgdot" id="lgdot" hidden></span></button></div>
+      <div class="sec"><div class="label"><span class="eh"><img src="../assets/mascot-eagle.webp" alt="" class="eagle"><span class="la">NUNTII · NEEDS YOU</span><span class="en">NEEDS YOU</span></span> <em id="nneed"></em><button class="fold" type="button" data-fold="right" title="Hide this panel ( ] )" aria-label="Hide needs you, at work and Legatus" aria-expanded="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></div><div id="needs"></div></div>
       <div class="sec"><div class="label">AT WORK <em id="nwork"></em></div><div id="desk"></div><div id="work"></div></div>
       <div class="chat">
-        <div class="label"><span class="eh"><img src="../assets/avatar.webp" alt="" class="lgface">LEGATUS</span> <em>your legio agent</em></div>
+        <div class="label"><span class="eh"><span class="lgface" aria-hidden="true"></span>LEGATUS</span> <em>your legio agent</em></div>
         <div class="msgs" id="msgs" aria-live="polite"></div>
         <div class="soon">Talking to Legatus comes later. For now he reports what changed while this page is open.</div>
       </div>
     </aside>
   </div>
 </div>
+<div class="scrim" id="scrim" hidden></div>
+<section class="lgwin" id="lgwin" role="dialog" aria-label="Legatus" hidden>
+  <div class="lgwin-head"><span class="lgface" aria-hidden="true"></span><div><b>Legatus</b><span>your legio agent</span></div><button class="fold" type="button" data-legatus-close aria-label="Close the Legatus window" title="Close (Esc)">×</button></div>
+  <div class="msgs" id="lgmsgs" aria-live="polite"></div>
+  <div class="soon">Talking to Legatus comes later. For now he reports what changed while this page is open.</div>
+</section>
 <div class="toast" id="toast" role="status" hidden></div>
 <script src="app.js" defer></script>
 </body>
