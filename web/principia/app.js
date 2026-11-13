@@ -47,6 +47,7 @@ const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute:
 const prefs = {
   line: 'aqueduct', density: 'comfortable', lang: 'latin',
   motion: true, desk: true, cost: true, done: true, detailH: null, storyW: null, lfold: false, rfold: false,
+  host: null,
 };
 try { Object.assign(prefs, JSON.parse(localStorage.getItem('principia-prefs') || '{}')); } catch (_) { /* private mode */ }
 function savePrefs() { try { localStorage.setItem('principia-prefs', JSON.stringify(prefs)); } catch (_) { /* ignore */ } }
@@ -1074,6 +1075,17 @@ function afterFold() {
   if (!$('#sets').hidden) renderSettings();
   if (prefs.detailH) $('#mid').style.setProperty('--dh', `${clampDetail(prefs.detailH)}px`);
 }
+function stationHost() {
+  return state.act.hosts.some((h) => h.name === prefs.host) ? prefs.host : state.act.default_host;
+}
+function hostRow() {
+  const hosts = state.act.hosts;
+  if (!state.act.enabled || !hosts.length) return '';
+  const cur = stationHost();
+  const h = hosts.find((x) => x.name === cur);
+  const note = h ? `${esc(h.about)}${h.untested ? ' Not tested.' : ''}` : '';
+  return `<div class="srow"><span>Default host</span><div class="pick wrap" role="group">${hosts.map((x) => `<button type="button" class="${x.name === cur ? 'on' : ''}" data-pref="host" data-val="${esc(x.name)}" aria-pressed="${x.name === cur}">${esc(x.name)}</button>`).join('')}</div><small>${note}</small></div>`;
+}
 function renderSettings() {
   $('#sets').innerHTML = `<h3>SETTINGS<button type="button" data-close aria-label="Close settings">×</button></h3>
     <div class="srow"><span>Interface</span><div class="pick" role="group"><button type="button" class="on" aria-pressed="true">Principia</button><button type="button" data-skin="camp" aria-pressed="false">Camp (classic)</button></div><small>The classic camp is the illustrated view. You can switch back from its HELP panel.</small></div>
@@ -1081,6 +1093,7 @@ function renderSettings() {
     <div class="srow"><span>Density</span>${pick('density', [['comfortable', 'Comfortable'], ['compact', 'Compact']])}</div>
     <div class="srow"><span>Labels</span>${pick('lang', [['latin', 'Latin and English'], ['english', 'English only']])}</div>
     <div class="srow">${tog('motion', 'Animations')}${tog('desk', 'Desk scene in At work')}${tog('cost', 'Show costs')}${tog('done', 'Show finished jobs')}</div>
+    ${hostRow()}
     <div class="srow"><span>Panels</span>${tog('lopen', 'Projects on the left')}${tog('ropen', 'Needs you, at work and Legatus')}<small>Keys: [ and ] fold each side, \\ folds both for focus.</small></div>
     <div class="note">Saved in this browser only.</div>`;
 }
@@ -1351,13 +1364,13 @@ document.addEventListener('keydown', (e) => {
 
 function openStation(u, host) {
   const hosts = state.act.hosts;
-  const chosen = hosts.some((h) => h.name === host) ? host : state.act.default_host;
+  const chosen = hosts.some((h) => h.name === host) ? host : stationHost();
   openDialog({
     title: `Station a centuria in ${u.name}`,
     lead: `legio sets up its pipeline in <span class="mono">${esc(u.path)}</span>. Your code and git history are not touched.`,
     list: ['copies the pipeline into <span class="mono">.centuria/</span>', 'adds <span class="mono">.centuria/</span>, <span class="mono">.worktrees/</span> and the host\'s own paths to <span class="mono">.git/info/exclude</span> (never <span class="mono">.gitignore</span>)', 'records the host below as the project\'s default; undo with <span class="mono">legio remove</span>'],
-    fields: [{ kind: 'select', id: 'host', label: 'Host (which agent CLI runs the jobs)', value: chosen,
-      options: hosts.map((h) => ({ value: h.name, label: `${h.name}${h.untested ? ' (untested)' : ''}${h.about ? ` · ${h.about}` : ''}` })) }],
+    fields: [{ kind: 'select', id: 'host', label: 'Host', value: chosen,
+      options: hosts.map((h) => ({ value: h.name, label: h.name })) }],
     confirm: 'Station it',
     preview: (v) => `legio add ${u.path} --host ${v.host}`,
     body: (v) => ({ action: 'station', path: u.path, host: v.host }),

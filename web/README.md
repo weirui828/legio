@@ -36,7 +36,8 @@ choice is kept in the browser (`localStorage["legio-skin"]`), and
 - **Left:** every stationed project as a tent with its numeral, counts and a
   waiting / active / done bar. Under it, *Terra incognita*: git repositories
   under the projects root without a centuria. Clicking one opens a confirm
-  step that stations it (`legio add <path> --host <host>`).
+  step that stations it (`legio add <path> --host <host>`). The step starts
+  on the default host from Settings.
 - **Middle:** the selected project's open jobs, one row each, on a progress
   track across the stages (intake → merged) with the role at work, the round
   bars and what is happening now; finished jobs below. *Table* switches to a
@@ -51,7 +52,8 @@ choice is kept in the browser (`localStorage["legio-skin"]`), and
   water flows as far as the job has got, a crack marks a failed gate, a sluice
   means it waits on you; *Road*: milestones I–VI and the golden milestone;
   *Plain*), density, Latin or English labels, animations, the desk scene,
-  costs and finished jobs. Saved per browser.
+  costs, finished jobs, and the default host for stationing (with what each
+  host is). Saved per browser.
 
 Three things can be **done** from the page, each after a confirm step that
 shows the exact command: station a repo, send feedback to a job that needs
