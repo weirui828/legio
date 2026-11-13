@@ -255,7 +255,7 @@
     "h": 56
   },
   "_meta": {
-    "source": "docs/ui/assets-src",
+    "source": "design/prototypes/ui/assets-src",
     "scale": "2x css"
   }
 }

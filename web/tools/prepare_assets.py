@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Normalise the generated images in docs/ui/assets-src/ into web/assets/.
+"""Normalise the generated images in design/prototypes/ui/assets-src/ into web/assets/.
 
 One-off tool, not part of the app. Needs Pillow + numpy (the app itself is
 stdlib-only and ships the output of this script committed).
@@ -22,7 +22,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-SRC = Path(__file__).resolve().parents[2] / "docs" / "ui" / "assets-src"
+SRC = Path(__file__).resolve().parents[2] / "design" / "prototypes" / "ui" / "assets-src"
 OUT = Path(__file__).resolve().parents[1] / "assets"
 
 # name -> target height in device pixels (2x the CSS display height)
@@ -230,7 +230,7 @@ def main() -> None:
             icon_name = ICON_NAMES[index]
             manifest[f"icon-{icon_name}"] = save(cell, f"icon-{icon_name}")
             index += 1
-    manifest["_meta"] = {"source": "docs/ui/assets-src", "scale": "2x css"}
+    manifest["_meta"] = {"source": "design/prototypes/ui/assets-src", "scale": "2x css"}
 
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"{len(manifest) - 1} assets -> {OUT}")

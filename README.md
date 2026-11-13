@@ -284,7 +284,6 @@ legio/
 │   └── checks.sh          the project's real checks (you fill this in)
 ├── swarm/                 review-only: diff in, review files out
 ├── web/                   the Camp Legio dashboard (stdlib server + assets)
-├── docs/                  art direction and design notes
 └── tests/                 host-registry and heartbeat tests, plus the fake-agent harness
 ```
 
@@ -297,7 +296,6 @@ legio/
 | [`AGENTS.md`](AGENTS.md) | the complete technical reference: contracts, state machine, host profiles, recipes for adding a role, stage or host |
 | [`swarm/README.md`](swarm/README.md) | the review-only tool: flags, exit codes, the Python library API |
 | [`web/README.md`](web/README.md) | the dashboard: endpoints, read-only guarantees, asset pipeline |
-| [`docs/ui/`](docs/ui/) | the art direction and the Camp Legio design brief |
 | [`centuria/roles/`](centuria/roles/) | the eight role prompts themselves |
 
 The repo tests itself offline — no model, no network:

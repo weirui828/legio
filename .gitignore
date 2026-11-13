@@ -2,8 +2,5 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# raw generated art, kept locally; web/assets/ holds the committed, web-sized output
-docs/ui/assets-src/
-
 # Legatus (the dashboard agent): its conversation id and transcript, local only
 .legatus/
