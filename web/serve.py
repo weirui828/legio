@@ -136,11 +136,20 @@ def allowed_artifact(rel: str) -> bool:
     return False
 
 
+def stationed_configs(base: Path) -> list[Path]:
+    """The config of each stationed project under the root.
+
+    A folder whose name starts with `~` (archives, third-party clones) is not a project.
+    """
+    return [c for c in sorted(base.glob("*/.centuria/config.json"))
+            if not c.parent.parent.name.startswith("~")]
+
+
 def resolve_job_dir(root: str | None, name: str, job: str) -> Path:
     base = projects_root(root)
     project = None
     if base.is_dir():
-        for config in sorted(base.glob("*/.centuria/config.json")):
+        for config in stationed_configs(base):
             if config.parent.parent.name == name:
                 project = config.parent.parent
                 break
@@ -295,7 +304,7 @@ def find_uncharted(base: Path) -> list[dict]:
         return found
     for child in sorted(base.iterdir()):
         try:
-            if (child.is_dir() and not child.name.startswith(".")
+            if (child.is_dir() and not child.name.startswith((".", "~"))
                     and (child / ".git").exists()
                     and not (child / ".centuria" / "config.json").is_file()):
                 found.append({"name": child.name, "path": str(child)})
@@ -308,7 +317,7 @@ def real_camp(root: str | None) -> dict:
     base = projects_root(root)
     projects = []
     if base.is_dir():
-        for config in sorted(base.glob("*/.centuria/config.json")):
+        for config in stationed_configs(base):
             projects.append(project_payload(config.parent.parent))
     return {"generated_at": now_iso(), "demo": False, "projects": projects,
             "uncharted": find_uncharted(base)}
@@ -659,7 +668,7 @@ def find_project(root: str | None, name: str) -> Path | None:
     base = projects_root(root)
     if not base.is_dir():
         return None
-    for config in sorted(base.glob("*/.centuria/config.json")):
+    for config in stationed_configs(base):
         if config.parent.parent.name == name:
             return config.parent.parent
     return None

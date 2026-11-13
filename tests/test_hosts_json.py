@@ -48,6 +48,15 @@ class HostsJsonTest(unittest.TestCase):
         self.assertIs(opts["json"], False)
         self.assertEqual(rest, ["hosts"])
 
+    def test_discover_skips_tilde_folders(self):
+        discover = runpy.run_path(str(LEGIO))["discover"]
+        with tempfile.TemporaryDirectory() as raw:
+            for name in ("alpha", "~archived"):
+                folder = Path(raw) / name / ".centuria"
+                folder.mkdir(parents=True)
+                (folder / "config.json").write_text("{}")
+            self.assertEqual([p.name for p in discover(raw)], ["alpha"])
+
     def test_invalid_file_warns_and_is_omitted(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)

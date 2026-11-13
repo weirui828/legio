@@ -37,9 +37,9 @@ shipped code.
 
 ```bash
 ./legio --help && ./legio hosts && ./legio doctor   # discovery/health, read-only
-python3 -m unittest discover -s tests -p 'test_*.py' -v   # 7 tests
+python3 -m unittest discover -s tests -p 'test_*.py' -v   # 8 tests
 python3 -m unittest discover -s swarm/tests -v            # 24 tests
-python3 -m unittest discover -s web/tests -v              # 35 tests
+python3 -m unittest discover -s web/tests -v              # 36 tests
 python3 -m py_compile legio centuria/bin/centuria centuria/bin/job \
   centuria/bin/gate centuria/bin/run swarm/swarm swarm/*.py web/*.py web/tools/*.py tests/*.py
 bash .centuria/checks.sh          # this checkout's real static checks
@@ -93,7 +93,7 @@ Pipeline-blindness check: `grep -nE 'tesserarius|build\.md|VERDICT:' legio` come
 | `web/legatus.md` | Legatus's brief, appended to Claude Code's system prompt. |
 | `web/principia/{index.html,app.js,styles.css}` | the default skin: three panels (projects / job track + scroll / needs you, at work, Legatus). |
 | `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | the camp skin, 51 WebP + manifest, art pipeline, tests, screenshots. |
-| `tests/` | `fake-agent.py`, `test_hosts_json.py` (4), `test_live_heartbeat.py` (3), `token-report.py`. |
+| `tests/` | `fake-agent.py`, `test_hosts_json.py` (5), `test_live_heartbeat.py` (3), `token-report.py`. |
 | `design/` | local, not in git: art direction and raw art (`prototypes/ui/`), old design briefs (`archive/`). |
 | `.centuria/`, `.worktrees/` (+ `.dsh/` with the dsh host) | local, untracked, listed in `.git/info/exclude`. |
 
@@ -326,8 +326,8 @@ Add a host: create `hosts/<name>.json` only; verify `./legio hosts` and `.centur
 
 Global flags parse anywhere: `--root DIR`, `--project NAME` (filter for `status`/`doctor`),
 `--offline`, `--all`, `--dry-run`, `--force`, `--agent NAME`, `--host NAME`, `--max-steps N`,
-`--yolo`, `--json`. Discovery = `<projects_root>/*/.centuria/config.json`; root from `config.json`,
-`LEGIO_ROOT`, then `--root`.
+`--yolo`, `--json`. Discovery = `<projects_root>/*/.centuria/config.json`, skipping folders named `~…`
+(archives, third-party clones); root from `config.json`, `LEGIO_ROOT`, then `--root`.
 
 | command | behavior |
 |---|---|
@@ -450,9 +450,9 @@ All suites are stdlib `unittest`, offline, temp-dir fixtures, from the repo root
 
 | command | tests | covers |
 |---|---|---|
-| `python3 -m unittest discover -s tests -p 'test_*.py' -v` | 7 | `legio hosts --json` shape/parse/fallbacks + `live.json` write/remove/missing folder |
+| `python3 -m unittest discover -s tests -p 'test_*.py' -v` | 8 | discovery skips `~…` folders, `legio hosts --json` shape/parse/fallbacks + `live.json` write/remove/missing folder |
 | `python3 -m unittest discover -s swarm/tests -v` | 24 | fan-out, PASS/CHANGES/ERROR, exit codes, `--diff`/`--pr`/`--spec`, crashed reviewer, tier/risk overrides, `--jobs 1`, dry-run, empty diff, unknown reviewer/host, library API, clean `git status` |
-| `python3 -m unittest discover -s web/tests -v` | 35 | payload allowlist, discovery, uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest, Host allowlist, Legatus (fake claude: argv, resume, origin/token, reset, failures, off states), actions (fake CLI: targets, stages, stdin, failures, token, demo) |
+| `python3 -m unittest discover -s web/tests -v` | 36 | payload allowlist, discovery (skips `~…` folders), uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest, Host allowlist, Legatus (fake claude: argv, resume, origin/token, reset, failures, off states), actions (fake CLI: targets, stages, stdin, failures, token, demo) |
 | `python3 -m unittest tests.test_live_heartbeat -v` | 3 | heartbeat tests, addressable individually |
 | `bash .centuria/checks.sh` | — | this checkout's gate: `py_compile`, `json.tool`, `bash -n` |
 
@@ -502,7 +502,7 @@ these three.
 
 | endpoint | returns |
 |---|---|
-| `GET /api/camp` | `{generated_at, demo, projects:[{name, path, ok, error, jobs, cast, lives}], uncharted:[{name, path}]}` (`uncharted` = git repos under the root without a centuria); jobs filtered to `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster, cost_usd, active, waiting, terminal, human_reason` (no worktree, prompts, config or secrets) |
+| `GET /api/camp` | `{generated_at, demo, projects:[{name, path, ok, error, jobs, cast, lives}], uncharted:[{name, path}]}` (`uncharted` = git repos under the root without a centuria; folders named `.…` or `~…` are skipped); jobs filtered to `id, issue, title, stage, round, round_limit, pr, gate, reviews, roster, cost_usd, active, waiting, terminal, human_reason` (no worktree, prompts, config or secrets) |
 | `GET /api/job?project=&job=` | allowlisted artifact listing (`files[]` with `path, size, kind`) |
 | `GET /api/job/file?project=&job=&path=` | `{path, size, truncated, text}` for one artifact |
 

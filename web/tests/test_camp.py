@@ -171,6 +171,15 @@ class Discovery(Fixture):
         self.assertEqual([u["name"] for u in camp["uncharted"]], ["plain"])
         self.assertEqual(camp["uncharted"][0]["path"], str(self.root / "plain"))
 
+    def test_tilde_folders_are_not_projects(self):
+        self.project("alpha")
+        self.project("~archived")
+        (self.root / "~vendor" / ".git").mkdir(parents=True)
+        camp = SERVE.real_camp(str(self.root))
+        self.assertEqual([p["name"] for p in camp["projects"]], ["alpha"])
+        self.assertEqual(camp["uncharted"], [])
+        self.assertIsNone(SERVE.find_project(str(self.root), "~archived"))
+
 
 class Demo(unittest.TestCase):
     def test_demo_camp_shape(self):
