@@ -148,7 +148,8 @@ def discover(root):
         die(f"projects root {root} does not exist "
             f"(set projects_root in {CONFIG_PATH} or export LEGIO_ROOT)")
     found = [Project(p) for p in sorted(root.iterdir())
-             if p.is_dir() and (p / ".centuria" / "config.json").exists()]
+             if p.is_dir() and not p.name.startswith("~")
+             and (p / ".centuria" / "config.json").exists()]
     return found
 
 
