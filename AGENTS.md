@@ -94,6 +94,7 @@ Pipeline-blindness check: `grep -nE 'tesserarius|build\.md|VERDICT:' legio` come
 | `web/principia/{index.html,app.js,styles.css}` | the default skin: three panels (projects / job track + scroll / needs you, at work, Legatus). |
 | `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | the camp skin, 51 WebP + manifest, art pipeline, tests, screenshots. |
 | `tests/` | `fake-agent.py`, `test_hosts_json.py` (5), `test_live_heartbeat.py` (3), `token-report.py`. |
+| `.github/workflows/secret-scan.yml` | CI: gitleaks (pinned, sha256-verified) over the full history on pushes to `main` and every PR. |
 | `design/` | local, not in git: art direction and raw art (`prototypes/ui/`), old design briefs (`archive/`). |
 | `.centuria/`, `.worktrees/` (+ `.dsh/` with the dsh host) | local, untracked, listed in `.git/info/exclude`. |
 
@@ -455,6 +456,10 @@ All suites are stdlib `unittest`, offline, temp-dir fixtures, from the repo root
 | `python3 -m unittest discover -s web/tests -v` | 36 | payload allowlist, discovery (skips `~…` folders), uncharted repos, demo camp, HTTP routes, both skins served, scroll allowlist/caps, 405s, traversal, asset manifest, Host allowlist, Legatus (fake claude: argv, resume, origin/token, reset, failures, off states), actions (fake CLI: targets, stages, stdin, failures, token, demo) |
 | `python3 -m unittest tests.test_live_heartbeat -v` | 3 | heartbeat tests, addressable individually |
 | `bash .centuria/checks.sh` | — | this checkout's gate: `py_compile`, `json.tool`, `bash -n` |
+
+Secrets: the `secret-scan` workflow fails a PR on any gitleaks finding (output redacted), and the
+repo has GitHub secret scanning + **push protection** on, so a push carrying a known provider token
+is refused before it lands. Keep real keys out of fixtures; hosts resolve secrets at spawn (`env.shell`).
 
 Fake-host end-to-end (tests the pipeline, not legio's own tests): create a **throwaway** git repo with
 a local bare `origin` (fake-agent commits and pushes), then station a centuria in it and drive it
