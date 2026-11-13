@@ -94,7 +94,7 @@ Pipeline-blindness check: `grep -nE 'tesserarius|build\.md|VERDICT:' legio` come
 | `web/principia/{index.html,app.js,styles.css}` | the default skin: three panels (projects / job track + scroll / needs you, at work, Legatus). |
 | `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | the camp skin, 51 WebP + manifest, art pipeline, tests, screenshots. |
 | `tests/` | `fake-agent.py`, `test_hosts_json.py` (4), `test_live_heartbeat.py` (3), `token-report.py`. |
-| `docs/ui/` | `assets.md` (art direction), `camp-issue.md` (design brief), `reference/*.jpg`; `assets-src/` local, gitignored. |
+| `design/` | local, not in git: art direction and raw art (`prototypes/ui/`), old design briefs (`archive/`). |
 | `.centuria/`, `.worktrees/` (+ `.dsh/` with the dsh host) | local, untracked, listed in `.git/info/exclude`. |
 
 ## 4. Contracts
@@ -441,7 +441,7 @@ README's prerequisite/host list if it is user-facing.
 **Change the web UI.** Edit `web/{index.html,app.js,styles.css,assets}`; keep it read-only (no POST, no
 writes, no agent calls); don't widen `JOB_FIELDS` or the artifact allowlist casually. Regenerate art
 with `python3 web/tools/prepare_assets.py` (Pillow + numpy; source art is local in
-`docs/ui/assets-src/`). Verify with web tests + `python3 web/serve.py --demo`, then update
+`design/prototypes/ui/assets-src/`). Verify with web tests + `python3 web/serve.py --demo`, then update
 `web/README.md` and screenshots in `web/docs/`.
 
 ## 11. Testing and verification
@@ -528,8 +528,8 @@ settings live in `localStorage["principia-prefs"]`. Routes `#/legion/<name>[/job
 "last seen". Hash routes: `#/`, `#/legion/<name>`, `.../cast`, `.../job/<id>`, `.../scrolls`.
 
 Assets: `web/assets/` is committed (51 WebP + `manifest.json` with `file/w/h`), generated from
-`docs/ui/assets-src/` (local, gitignored, 64 MB here) by `web/tools/prepare_assets.py`; art direction in
-`docs/ui/assets.md`. Screenshots: `web/docs/{camp,tent,job,scrolls,cast,quiet}.jpg` (note the `web/`
+`design/prototypes/ui/assets-src/` (local, not in git, 64 MB here) by `web/tools/prepare_assets.py`; art
+direction in `design/prototypes/ui/assets.md` (local). Screenshots: `web/docs/{camp,tent,job,scrolls,cast,quiet}.jpg` (note the `web/`
 prefix). Tests: 35, fake projects with a stub `centuria view`, a fake `claude` (Legatus) and a fake CLI (actions).
 
 ## 13. Gotchas
@@ -580,7 +580,6 @@ prefix). Tests: 35, fake projects with a stub `centuria view`, a fake `claude` (
 | `AGENTS.md` (this file) | agents/maintainers | any contract, stage, artifact, config key, host field, flag or test command changes |
 | [`swarm/README.md`](swarm/README.md) | swarm users | flags, reviewers, exit codes, report format, library API |
 | [`web/README.md`](web/README.md) | dashboard users/designers | endpoints, routes, heartbeat, asset pipeline, tests |
-| `docs/ui/assets.md` / `camp-issue.md` | art / historical design brief | sprites, prompts, palette; camp-issue predates the implementation (`legio web`, `centuria cast --json` do not exist) |
 | `centuria/roles/*.md`, `hosts/*.json` `about`/`_note` | agents, operator | role behavior, surfaces, output contract; invocation, tiers, secrets |
 
 Where a doc and the source disagree, prefer the source.

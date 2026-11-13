@@ -222,8 +222,8 @@ web/
 ## Assets
 
 `web/assets/` is committed: 51 WebP files plus `manifest.json`, about 1.9 MB
-total. They are generated from the raw PNGs in `docs/ui/assets-src/` (not
-committed, about 50 MB) with:
+total. They are generated from the raw PNGs in `design/prototypes/ui/assets-src/` (local,
+not committed, about 50 MB) with:
 
 ```bash
 python3 web/tools/prepare_assets.py      # needs Pillow + numpy
@@ -233,8 +233,8 @@ That script trims transparent padding, cuts the flat-white backgrounds out of
 the desk/soldier/icon sheets (with a soft, de-fringed edge — no white halo),
 slices the sheets, resizes each sprite to 2x its CSS size and writes the
 manifest. The art direction (and the prompts that made
-it) lives in `docs/ui/assets.md`; the two style references are in
-`docs/ui/reference/`. Missing assets are not faked: the app simply renders
+it) is in `design/prototypes/ui/assets.md`; the two style references are in
+`design/prototypes/ui/reference/`. Both are local. Missing assets are not faked: the app simply renders
 broken images, so commit the output of the script when it changes.
 
 ## Tests
