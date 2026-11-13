@@ -89,7 +89,7 @@ Pipeline-blindness check: `grep -nE 'tesserarius|build\.md|VERDICT:' legio` come
 | `swarm/api.py` | diff resolution, reviewer fan-out, verdict parsing, run folder + `Report`. |
 | `swarm/hostkit.py` | host adapter: build/spawn/collect; no jobs, no sessions. |
 | `swarm/config.json`, `roles/*.md`, `hosts/fake.json` | reviewer registry + 5 prompts + test harness (shadows `../hosts/fake.json`). |
-| `web/serve.py` | stdlib HTTP: static `web/` + 3 read-only JSON endpoints + Legatus (`/api/legatus*`); shells out to `centuria view` and, for Legatus only, `claude -p`. |
+| `web/serve.py` | stdlib HTTP: static `web/` + 3 read-only JSON endpoints + Legatus (`/api/legatus*`) + confirmed actions (`/api/action*`); shells out to `centuria view`, to `claude -p` (Legatus) and, after the operator confirms, to `legio add` / `bin/job` (actions). |
 | `web/legatus.md` | Legatus's brief, appended to Claude Code's system prompt. |
 | `web/principia/{index.html,app.js,styles.css}` | the default skin: three panels (projects / job track + scroll / needs you, at work, Legatus). |
 | `web/{index.html,app.js,styles.css,assets,tools,tests,docs}` | the camp skin, 51 WebP + manifest, art pipeline, tests, screenshots. |
@@ -438,8 +438,8 @@ tier and `./legio doctor`.
 **Add a host.** One `hosts/<name>.json` (§7); verify `./legio hosts` and a `--dry-run`; update the
 README's prerequisite/host list if it is user-facing.
 
-**Change the web UI.** Edit `web/{index.html,app.js,styles.css,assets}`; keep it read-only (no POST, no
-writes, no agent calls); don't widen `JOB_FIELDS` or the artifact allowlist casually. Regenerate art
+**Change the web UI.** Edit `web/{index.html,app.js,styles.css,assets}`; keep it read-only except for Legatus
+and the three confirmed actions (§12): add no other POST, write or agent call; don't widen `JOB_FIELDS` or the artifact allowlist casually. Regenerate art
 with `python3 web/tools/prepare_assets.py` (Pillow + numpy; source art is local in
 `design/prototypes/ui/assets-src/`). Verify with web tests + `python3 web/serve.py --demo`, then update
 `web/README.md` and screenshots in `web/docs/`.
@@ -482,7 +482,8 @@ Cost report (dev tool, DSH-specific): `python3 tests/token-report.py <job-id> [-
 
 `web/serve.py` = `ThreadingHTTPServer` on `127.0.0.1` (default 8766) serving `web/` statically plus
 three read-only JSON endpoints; it shells out to `.centuria/bin/centuria view` (5 s timeout) and
-writes nothing to any project. **Legatus** is the one exception to read-only: `GET /api/legatus`
+never writes to a project itself. **Legatus** and the confirmed **actions** (below) are the only
+exceptions to read-only: `GET /api/legatus`
 (`{enabled, reason, model, busy, token, messages}`), `POST /api/legatus/ask` (`{token, text, context}`)
 and `POST /api/legatus/reset` (`{token}`). Ask runs `claude -p --output-format json --model <m>
 --append-system-prompt-file web/legatus.md --permission-mode default (--session-id|--resume) <id>
@@ -506,7 +507,8 @@ these three.
 | `GET /api/job?project=&job=` | allowlisted artifact listing (`files[]` with `path, size, kind`) |
 | `GET /api/job/file?project=&job=&path=` | `{path, size, truncated, text}` for one artifact |
 
-Read-only: no POST/PUT/PATCH/DELETE (405); the project comes from a discovered
+The three endpoints are read-only: a POST other than Legatus's and `/api/action` gets 405, and so
+does every PUT/PATCH/DELETE. The project comes from a discovered
 `*/.centuria/config.json`; job ids must match `[A-Za-z0-9][A-Za-z0-9._-]*`; reads must resolve inside
 the job folder. Allowlist: `issue.md`, `intake.md`, `spec.md`, `build.md`, `decision.md`,
 `rejection.md`, `feedback-*.md`, `round-*/checks.md`, `round-*/review-*.md`, `agent-*-*.log`;
@@ -520,7 +522,8 @@ four-project camp and `DEMO_SCROLLS`.
 Two skins, same API. A directory with an `index.html` is served at `<dir>/` (`/principia` → 301).
 **Principia** (`web/principia/`, the default): polls `/api/camp` every 2.5 s, builds each open job's
 story from `/api/job` + header lines of `intake.md`, `decision.md`, `round-N/checks.md` and
-`review-*.md` (cached per stage/round/gate/reviews), and offers actions only as copied commands;
+`review-*.md` (cached per stage/round/gate/reviews), offers station / feedback / reject as confirmed actions and everything else (merging included) as
+copied commands, with the default station host as a setting;
 settings live in `localStorage["principia-prefs"]`. Routes `#/legion/<name>[/job/<id>]`.
 **Camp** (`web/index.html` + `app.js`): `index.html` redirects to `principia/` unless
 `localStorage["legio-skin"] == "camp"` or `?skin=camp`; lanes come only from
@@ -530,7 +533,7 @@ settings live in `localStorage["principia-prefs"]`. Routes `#/legion/<name>[/job
 Assets: `web/assets/` is committed (51 WebP + `manifest.json` with `file/w/h`), generated from
 `design/prototypes/ui/assets-src/` (local, not in git, 64 MB here) by `web/tools/prepare_assets.py`; art
 direction in `design/prototypes/ui/assets.md` (local). Screenshots: `web/docs/{camp,tent,job,scrolls,cast,quiet}.jpg` (note the `web/`
-prefix). Tests: 35, fake projects with a stub `centuria view`, a fake `claude` (Legatus) and a fake CLI (actions).
+prefix). Tests: 36, fake projects with a stub `centuria view`, a fake `claude` (Legatus) and a fake CLI (actions).
 
 ## 13. Gotchas
 
